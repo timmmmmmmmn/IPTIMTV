@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// Ondertekening: op GitHub uit de geheime instellingen, lokaal uit
+// ../iptimtv-release.properties (staat buiten de repo).
+val localSigning = Properties().apply {
+    val file = rootProject.file("../iptimtv-release.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+fun signing(name: String): String? = System.getenv(name) ?: localSigning.getProperty(name)
 
 val buildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
 
@@ -19,9 +29,18 @@ android {
         versionName = "1.0.$buildNumber"
     }
 
+    signingConfigs {
+        create("release") {
+            signing("IPTIMTV_KEYSTORE")?.let { storeFile = file(it) }
+            storePassword = signing("IPTIMTV_KEYSTORE_PASSWORD")
+            keyAlias = signing("IPTIMTV_KEY_ALIAS")
+            keyPassword = signing("IPTIMTV_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
