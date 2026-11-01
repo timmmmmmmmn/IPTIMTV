@@ -35,7 +35,11 @@ class App : Application() {
         Recordings.init(this)
         Reminders.init(this)
         Library.init(this)
+        initCast()
     }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun initCast() = nl.timvanbergen.iptimtv.data.Cast.init(this)
 }
 
 class MainActivity : ComponentActivity() {
@@ -84,7 +88,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Wie de app later weer opent, begint altijd op het startscherm.
-        Nav.reset()
+        if (BuildConfig.MOBILE) {
+            // Telefoon: waar je was blijft staan; alleen de video stopt (behalve bij "alleen geluid").
+            if (!nl.timvanbergen.iptimtv.data.AudioOnly.on && !isChangingConfigurations) Nav.play = null
+        } else {
+            // Wie de app later weer opent, begint altijd op het startscherm.
+            Nav.reset()
+        }
     }
 }

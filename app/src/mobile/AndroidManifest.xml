@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Alleen geluid: doorspelen als het scherm uit is -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <application>
+        <!-- Casten naar Chromecast (standaard ontvanger van Google) -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="nl.timvanbergen.iptimtv.data.CastOptions" />
+
+        <service
+            android:name=".data.AudioService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <receiver
+            android:name=".data.AudioStop"
+            android:exported="false" />
+    </application>
+</manifest>

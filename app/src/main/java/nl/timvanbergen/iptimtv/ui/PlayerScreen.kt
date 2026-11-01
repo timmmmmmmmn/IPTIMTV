@@ -53,6 +53,10 @@ import androidx.compose.material.icons.filled.Star
 import nl.timvanbergen.iptimtv.data.League
 import nl.timvanbergen.iptimtv.data.Match
 import nl.timvanbergen.iptimtv.data.Sport
+import nl.timvanbergen.iptimtv.data.AudioOnly
+import nl.timvanbergen.iptimtv.data.Cast
+import nl.timvanbergen.iptimtv.data.CastItem
+import nl.timvanbergen.iptimtv.ui.phone.CastUi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -456,6 +460,22 @@ fun PlayerScreen(pb: Playback) {
         }
     }
 
+    // ---------- dempen en alleen geluid (telefoon) ----------
+    var muted by remember { mutableStateOf(false) }
+    LaunchedEffect(muted) { player.volume = if (muted) 0f else 1f }
+    var audioOnly by remember { mutableStateOf(false) }
+    fun setAudioOnly(on: Boolean) {
+        audioOnly = on
+        // Zonder beeld hoeft de speler de video ook niet te verwerken.
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(MC.TRACK_TYPE_VIDEO, on).build()
+        if (on) { AudioOnly.start(context, item.title); say("Alleen geluid: je kunt het scherm uitzetten") } else AudioOnly.stop(context)
+    }
+    LaunchedEffect(item.title) { AudioOnly.update(context, item.title) }
+    DisposableEffect(Unit) {
+        AudioOnly.onStop = { Nav.play = null }
+        onDispose { AudioOnly.onStop = null; AudioOnly.stop(context) }
+    }
+
     // ---------- het pauzemenu ----------
     val nowProgram = rememberPrograms(item.epgId, 1).firstOrNull()?.takeIf { it.isLive() }
     @Suppress("UNUSED_EXPRESSION") tracksVersion
@@ -729,10 +749,21 @@ fun PlayerScreen(pb: Playback) {
                     this.player = player
                 }
             },
-            update = { it.resizeMode = resizeMode(resize) },
+            update = { it.resizeMode = resizeMode(resize); it.keepScreenOn = !audioOnly },
             modifier = Modifier.fillMaxSize(),
         )
 
+        if (audioOnly) Column(
+            Modifier.fillMaxSize().background(Color.Black).padding(bottom = 130.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Bottom,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Ic.Headphones, C.accent, 22.dp)
+                Spacer(Modifier.width(10.dp))
+                T("Alleen geluid", size = 18.sp, weight = FontWeight.Bold)
+            }
+            T("Speelt door als je het scherm uitzet", size = 14.sp, color = C.dim)
+        }
         if (buffering && error == null) Spinner(Modifier.align(Alignment.Center))
         error?.let {
             Column(
@@ -758,15 +789,21 @@ fun PlayerScreen(pb: Playback) {
             MobileControls(
                 visible = controls && !panel && sheet == null,
                 item = item, number = index + 1, live = pb.live, playing = playing, position = position, length = length,
-                recording = recording != null, canRestart = restartEntry != null,
+                recording = recording != null,
                 onTable = if (matchOn != null) ({ matchTick++; sheet = "table" }) else null,
+                muted = muted, casting = castOn(),
+                onCast = if (castAvailable()) ({
+                    // De lijst en waar je bent naar de Chromecast; daar verder kijken.
+                    val list = pb.items.mapIndexed { i, it ->
+                        CastItem(it.url, it.title, it.subtitle, it.image ?: it.logo, pb.live, if (i == index && !pb.live) player.currentPosition else 0)
+                    }
+                    flush()
+                    CastUi.choose(list, index)
+                }) else null,
                 onClose = { close() },
                 onChannels = { controls = false; panelIndex = index; panel = true; panelTick++ },
-                onRecord = { sheet = "record" },
-                onAudio = { sheet = "audio" },
-                onSubs = { sheet = "subs" },
-                onAspect = { resize = resizeModes[(resizeModes.indexOfFirst { it.first == resize } + 1) % resizeModes.size].first; say("Beeld: ${resizeModes.first { it.first == resize }.second}") },
-                onRestart = { restartEntry?.action?.invoke() },
+                onMute = { muted = !muted; say(if (muted) "Geluid uit" else "Geluid aan") },
+                onMore = { sheet = "more" },
                 onPrev = { if (pb.live) go(index - 1) else seekBy(-Settings.seekBack.int * 1000L) },
                 onNext = { if (pb.live) go(index + 1) else seekBy(Settings.seekForward.int * 1000L) },
                 onPlayPause = { if (player.isPlaying) player.pause() else player.play() },
@@ -782,6 +819,16 @@ fun PlayerScreen(pb: Playback) {
                             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(MC.TRACK_TYPE_TEXT, true).build()
                         })) + trackChoices(MC.TRACK_TYPE_TEXT).map { (name, act) -> Triple(name, !off && name == currentTrack(MC.TRACK_TYPE_TEXT), act) }
                     }
+                    "more" -> buildList {
+                        add(Triple(if (audioOnly) "Beeld weer aan" else "Alleen geluid (ook met scherm uit)", audioOnly) { setAudioOnly(!audioOnly) })
+                        if (pb.live) add(Triple(if (recording != null) "Opname" else "Opnemen", recording != null) { sheet = "record" })
+                        if (restartEntry != null) add(Triple("Vanaf het begin kijken", false) { restartEntry.action() })
+                        add(Triple("Geluidsspoor: ${currentTrack(MC.TRACK_TYPE_AUDIO) ?: "standaard"}", false) { sheet = "audio" })
+                        add(Triple("Ondertitels", false) { sheet = "subs" })
+                        add(Triple("Beeld: ${resizeModes.first { it.first == resize }.second}", false) {
+                            resize = resizeModes[(resizeModes.indexOfFirst { it.first == resize } + 1) % resizeModes.size].first
+                        })
+                    }
                     "table" -> buildList {
                         liveMatch?.let { m -> add(Triple("${matchLine(m)} · ${matchState(m)}", true) {}) }
                         val t = table
@@ -794,11 +841,11 @@ fun PlayerScreen(pb: Playback) {
                     else -> recordOptions().map { (label, act) -> Triple(label, false, act) }
                 }
                 OptionSheet(
-                    title = when (which) { "audio" -> "Geluid"; "subs" -> "Ondertitels"; "table" -> "Stand ${matchOn?.first?.name ?: ""}"; else -> if (recording != null) "Opname" else "Opnemen" },
+                    title = when (which) { "audio" -> "Geluid"; "subs" -> "Ondertitels"; "more" -> "Meer"; "table" -> "Stand ${matchOn?.first?.name ?: ""}"; else -> if (recording != null) "Opname" else "Opnemen" },
                     options = if (which == "record" && recording != null) listOf(Triple("Opname stoppen", false) { Recordings.stop(recording); say("Opname gestopt") }) else options,
                     empty = when (which) { "audio" -> "Er is maar één geluidsspoor"; "table" -> "Geen stand (bekertoernooi)"; else -> "Niets te kiezen" },
                     modifier = Modifier.align(Alignment.BottomCenter),
-                    onPick = { it(); if (sheet != "table") sheet = null },
+                    onPick = { val before = sheet; it(); if (sheet == before && sheet != "table") sheet = null },
                     onClose = { sheet = null },
                 )
             }
@@ -851,9 +898,9 @@ private fun RoundButton(icon: ImageVector, size: Int, onClick: () -> Unit, tint:
 @Composable
 private fun MobileControls(
     visible: Boolean, item: PlayItem, number: Int, live: Boolean, playing: Boolean, position: Long, length: Long,
-    recording: Boolean, canRestart: Boolean, onTable: (() -> Unit)?,
-    onClose: () -> Unit, onChannels: () -> Unit, onRecord: () -> Unit, onAudio: () -> Unit, onSubs: () -> Unit,
-    onAspect: () -> Unit, onRestart: () -> Unit, onPrev: () -> Unit, onNext: () -> Unit, onPlayPause: () -> Unit,
+    recording: Boolean, onTable: (() -> Unit)?, muted: Boolean, casting: Boolean, onCast: (() -> Unit)?,
+    onClose: () -> Unit, onChannels: () -> Unit, onMute: () -> Unit, onMore: () -> Unit,
+    onPrev: () -> Unit, onNext: () -> Unit, onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit, onTouch: () -> Unit,
 ) {
     AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut()) {
@@ -873,12 +920,11 @@ private fun MobileControls(
                 if (live) {
                     QuickButton(Icons.Filled.List, "Kanalen") { onTouch(); onChannels() }
                     if (onTable != null) QuickButton(Icons.Filled.Star, "Stand") { onTouch(); onTable() }
-                    if (canRestart) QuickButton(Ic.Restart, "Begin") { onTouch(); onRestart() }
-                    QuickButton(Ic.Record, if (recording) "Opname" else "Opnemen", tint = if (recording) C.live else Color.White) { onTouch(); onRecord() }
+                    if (recording) QuickButton(Ic.Record, "Opname", tint = C.live) { onTouch(); onMore() }
                 }
-                QuickButton(Ic.Audio, "Geluid") { onTouch(); onAudio() }
-                QuickButton(Ic.Subtitles, "Ondertitels") { onTouch(); onSubs() }
-                QuickButton(Ic.Aspect, "Beeld") { onTouch(); onAspect() }
+                if (onCast != null) QuickButton(if (casting) Ic.CastOn else Ic.Cast, "Casten") { onTouch(); onCast() }
+                QuickButton(if (muted) Ic.Mute else Ic.Audio, if (muted) "Gedempt" else "Geluid", tint = if (muted) C.accent else Color.White) { onTouch(); onMute() }
+                QuickButton(Ic.More, "Meer") { onTouch(); onMore() }
             }
             // Midden: grote knoppen
             Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(40.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1181,3 +1227,9 @@ private fun Spinner(modifier: Modifier = Modifier) {
         )
     }
 }
+
+@OptIn(UnstableApi::class)
+private fun castAvailable() = Cast.available
+
+@OptIn(UnstableApi::class)
+private fun castOn() = Cast.device != null

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -203,7 +204,7 @@ fun IptimApp(onExit: () -> Unit) {
         Density(widthPx / (DESIGN_WIDTH / scale), 1f)
     }
     CompositionLocalProvider(LocalDensity provides d) {
-        AppContent(onExit)
+        if (Mobile) nl.timvanbergen.iptimtv.ui.phone.PhoneTheme { AppContent(onExit) } else AppContent(onExit)
     }
 }
 
@@ -229,11 +230,15 @@ private fun AppContent(onExit: () -> Unit) {
     Box(Modifier.fillMaxSize().background(C.bg)) {
         when {
             Library.profiles.isEmpty() -> Box(if (Mobile) Modifier.systemBarsPadding() else Modifier) { WelcomeScreen() }
-            Mobile -> MobileMain(onExit)
+            Mobile -> nl.timvanbergen.iptimtv.ui.phone.PhoneMain(onExit)
             else -> MainScreen(onExit)
         }
         Nav.overlays.lastOrNull()?.let { o -> key(o) { OverlayHost(o) } }
-        Nav.play?.let { p -> key(p) { PlayerScreen(p) } }
+        Nav.play?.let { p ->
+            // Verbonden met een Chromecast? Dan gaat het daarheen in plaats van op de telefoon.
+            if (Mobile && castConnected()) LaunchedEffect(p) { castPlayback(p); Nav.play = null }
+            else key(p) { PlayerScreen(p) }
+        }
         Reminders.banner?.let { r -> key(r) { ReminderBanner(r, Modifier.align(Alignment.TopCenter)) } }
     }
 }
@@ -263,7 +268,7 @@ private fun OverlayHost(o: Overlay) {
         Modifier
             .fillMaxSize()
             .background(C.bg.copy(alpha = if (o.isDialog) 0.88f else 1f))
-            .then(if (Mobile) Modifier.systemBarsPadding() else Modifier)
+            .then(if (Mobile && !o.fullBleed) Modifier.systemBarsPadding() else if (Mobile) Modifier.navigationBarsPadding() else Modifier)
             .onFocusChanged { inside = it.hasFocus }
             .focusRequester(focus)
             .focusProperties { onExit = { cancelFocusChange() } }
@@ -276,12 +281,12 @@ private fun OverlayHost(o: Overlay) {
             is Overlay.Guide -> ChannelGuide(o.channel)
             is Overlay.ProgramMenu -> ProgramMenu(o.channel, o.program)
             is Overlay.TextInput -> TextInputDialog(o)
-            is Overlay.MovieInfo -> MovieInfo(o.movie)
-            is Overlay.ShowInfo -> ShowInfo(o.show)
+            is Overlay.MovieInfo -> if (Mobile) nl.timvanbergen.iptimtv.ui.phone.PhoneMovie(o.movie) else MovieInfo(o.movie)
+            is Overlay.ShowInfo -> if (Mobile) nl.timvanbergen.iptimtv.ui.phone.PhoneShow(o.show) else ShowInfo(o.show)
             is Overlay.ProfileForm -> ProfileForm(o.profile)
             is Overlay.ProfileMenu -> ProfileMenu(o.profile)
             is Overlay.Account -> AccountForm(o.create)
-            is Overlay.MatchInfo -> MatchInfo(o.match)
+            is Overlay.MatchInfo -> if (Mobile) nl.timvanbergen.iptimtv.ui.phone.PhoneMatch(o.match) else MatchInfo(o.match)
             is Overlay.RecordingMenu -> RecordingMenu(o.recording)
             is Overlay.WatchMenu -> WatchMenu(o.item)
             Overlay.CategoryOrder -> CategoryOrderScreen()
@@ -289,6 +294,19 @@ private fun OverlayHost(o: Overlay) {
             Overlay.Update -> UpdateDialog()
         }
     }
+}
+
+/** Telefoonpagina's die zelf met de statusbalk omgaan (afbeelding tot bovenin, of een eigen bovenbalk). */
+private val Overlay.fullBleed get() = this is Overlay.MovieInfo || this is Overlay.ShowInfo || this is Overlay.MatchInfo
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private fun castConnected() = nl.timvanbergen.iptimtv.data.Cast.device != null
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private fun castPlayback(p: Playback) {
+    nl.timvanbergen.iptimtv.data.Cast.play(p.items.map {
+        nl.timvanbergen.iptimtv.data.CastItem(it.url, it.title, it.subtitle, it.image ?: it.logo, p.live, if (p.live) 0 else p.startAt)
+    }, p.index)
 }
 
 private val Overlay.isDialog get() =

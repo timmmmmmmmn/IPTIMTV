@@ -47,7 +47,7 @@ object Updater {
                 if (a.optString("name") == BuildConfig.APK_NAME) url = a.optString("browser_download_url")
             }
             val release = if (version > BuildConfig.VERSION_CODE && url != null)
-                Release(version, o.optString("name", tag), o.optString("body"), url) else null
+                Release(version, o.optString("name", tag), o.optString("body").lines().filterNot { it.startsWith("Co-Authored-By") }.joinToString("\n").trim(), url) else null
             withContext(Dispatchers.Main) {
                 available = release
                 status = if (release == null) "Je hebt de nieuwste versie (${BuildConfig.VERSION_NAME})" else null

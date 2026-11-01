@@ -156,7 +156,7 @@ private fun TeamLogo(t: Team) {
     }
 }
 
-private fun countryName(c: String) = mapOf(
+internal fun countryName(c: String) = mapOf(
     "NL" to "Nederland", "BE" to "België", "UK" to "Engeland", "DE" to "Duitsland", "ES" to "Spanje", "IT" to "Italië",
     "FR" to "Frankrijk", "PT" to "Portugal", "US" to "VS", "AR" to "Argentinië", "TR" to "Turkije", "AU" to "Australië",
     "MX" to "Mexico", "BR" to "Brazilië", "CA" to "Canada", "LATAM" to "Latijns-Amerika", "ARAB" to "Arabisch",

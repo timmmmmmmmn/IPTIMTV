@@ -88,6 +88,10 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
     implementation("androidx.media3:media3-datasource-okhttp:$media3")
     implementation("androidx.media3:media3-ui:$media3")
+    // Telefoon: Material 3 voor een echte telefoon-app, en casten naar Chromecast.
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.media3:media3-cast:$media3")
+    implementation("androidx.mediarouter:mediarouter:1.7.0")
     // Laat Android de app na installatie vooraf compileren (snellere start en soepeler scrollen).
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 }

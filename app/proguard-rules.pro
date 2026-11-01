@@ -9,3 +9,6 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+# Casten: de app geeft deze klasse alleen via het manifest door aan Google Cast.
+-keep class nl.timvanbergen.iptimtv.data.CastOptions { *; }
