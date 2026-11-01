@@ -849,12 +849,36 @@ async function runDiag() {
     <p class="dim">De IPTIMTV-server probeert nu je provider te bereiken. Dit duurt ongeveer 10 seconden.</p>
     <pre id="diag" class="card" style="white-space:pre-wrap;font-size:13px;line-height:1.5">Bezig…</pre>
     <div class="btns"><button class="btn primary" id="copydiag">Kopiëren</button></div></div>`);
+  const lines = [];
   try {
     const r = await api('diag');
-    $('#diag').textContent = r.lines.join('\n');
+    lines.push(...r.lines);
   } catch (e) {
-    $('#diag').textContent = 'Test mislukt: ' + e.message;
+    lines.push('Servertest mislukt: ' + e.message);
   }
+  // Ook vanuit deze browser zelf (alleen mogelijk op de http-versie).
+  const p = active();
+  if (p?.type === 'XTREAM' && onHttp) {
+    lines.push('', `Vanuit je browser (${navigator.userAgent.match(/(Chrome|Firefox|Safari|Edg)\/[\d.]+/)?.[0] || 'browser'}):`);
+    const url = xbase(p);
+    const tries = [['gewoon', {}], ['zonder referer', { referrerPolicy: 'no-referrer' }], ['ondoorzichtig', { mode: 'no-cors' }]];
+    for (const [name, opt] of tries) {
+      const t0 = performance.now();
+      try {
+        const res = await fetch(url, { cache: 'no-store', ...opt });
+        const ms = Math.round(performance.now() - t0);
+        if (res.type === 'opaque') lines.push(`  ${name}: bereikbaar, maar antwoord niet leesbaar · ${ms} ms`);
+        else {
+          const text = await res.text();
+          lines.push(`  ${name}: ${res.status} · ${ms} ms · cors: ${res.headers.get('access-control-allow-origin') || '-'} · ${text.slice(0, 120).replace(/\s+/g, ' ')}`);
+        }
+      } catch (e) {
+        lines.push(`  ${name}: ${e.name}: ${e.message} · ${Math.round(performance.now() - t0)} ms`);
+      }
+    }
+  } else if (p?.type === 'XTREAM') lines.push('', 'Browsertest: open dit op http://' + location.hostname + ':8080 om ook je browser te testen.');
+  const pw = p?.password;
+  $('#diag').textContent = lines.join('\n').split(pw || '\u0000').join('***');
   $('#copydiag').onclick = () => navigator.clipboard?.writeText($('#diag').textContent).then(() => toast('Gekopieerd'));
 }
 
