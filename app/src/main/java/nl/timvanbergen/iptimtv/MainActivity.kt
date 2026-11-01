@@ -17,6 +17,7 @@ import nl.timvanbergen.iptimtv.data.Reminders
 import android.content.Intent
 import nl.timvanbergen.iptimtv.data.Settings
 import nl.timvanbergen.iptimtv.data.Sync
+import nl.timvanbergen.iptimtv.data.CatalogShare
 import nl.timvanbergen.iptimtv.data.Updater
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -30,6 +31,7 @@ class App : Application() {
         History.init(this)
         Cloud.init(this)
         Sync.init(this)
+        CatalogShare.init(this)
         Recordings.init(this)
         Reminders.init(this)
         Library.init(this)

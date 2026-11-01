@@ -332,6 +332,23 @@ async function api(request, env, path) {
     return json({ ok: true });
   }
 
+  // Lijsten die de apps uploaden (gzip). Zo werkt de website ook als de provider de server blokkeert.
+  const cm = path.match(/^catalog\/([A-Za-z0-9_-]{1,40})(?:\/series\/([0-9A-Za-z_-]{1,40}))?$/);
+  if (cm) {
+    const key = cm[2] ? `ser:${user.id}:${cm[1]}:${cm[2]}` : `cat:${user.id}:${cm[1]}`;
+    if (m === 'PUT') {
+      const data = await request.arrayBuffer();
+      if (data.byteLength > 20 * 1024 * 1024) return fail(413, 'Te groot');
+      await env.CATALOG.put(key, data, { metadata: { updated: Date.now() }, expirationTtl: cm[2] ? 30 * 86400 : 60 * 86400 });
+      return json({ ok: true });
+    }
+    if (m === 'GET') {
+      const { value, metadata } = await env.CATALOG.getWithMetadata(key, 'arrayBuffer');
+      if (!value) return fail(404, 'Nog niet geüpload');
+      return new Response(value, { headers: { 'content-type': 'application/gzip', 'x-updated': String(metadata?.updated || 0), 'cache-control': 'no-store' } });
+    }
+  }
+
   // Verbinding testen: wat krijgt de server terug van de provider(s) van deze gebruiker? (Zonder wachtwoord in de uitvoer.)
   if (path === 'diag' && m === 'GET') {
     const row = await env.DB.prepare("SELECT value FROM sync WHERE user_id = ? AND key = 'profiles'").bind(user.id).first();
@@ -423,7 +440,12 @@ export default {
     }
     if (url.pathname.startsWith('/api/')) {
       try {
-        return await api(request, env, url.pathname.slice(5).replace(/\/$/, ''));
+        // Ook bruikbaar vanaf de afspeelpagina op http://…:8080 (inloggen gaat met een token, niet met cookies).
+        const res = await api(request, env, url.pathname.slice(5).replace(/\/$/, ''));
+        const out = new Response(res.body, res);
+        out.headers.set('access-control-allow-origin', '*');
+        out.headers.set('access-control-expose-headers', 'x-updated');
+        return out;
       } catch (e) {
         return fail(500, 'Serverfout');
       }

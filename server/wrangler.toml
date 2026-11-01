@@ -14,3 +14,8 @@ migrations_dir = "migrations"
 directory = "public"
 binding = "ASSETS"
 run_worker_first = true
+
+# Kanalen-/filmlijsten die de apps uploaden (voor providers die de server blokkeren).
+[[kv_namespaces]]
+binding = "CATALOG"
+id = "9df4a038f2d740d59ce9d6c8fcd3342c"

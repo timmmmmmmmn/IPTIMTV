@@ -135,13 +135,59 @@ function parseM3u(text) {
   return { liveCats: [...liveCats.values()], live, movieCats: [...movieCats.values()], movies, showCats: [], shows: [] };
 }
 
+// Providers die de IPTIMTV-server blokkeren: lijsten komen dan uit je account (geüpload door de app)
+// en de stream speelt rechtstreeks vanaf je eigen internet af.
+const isDirect = (p) => localStorage.getItem('direct:' + p.id) === '1';
+const setDirect = (p, on) => { if (on) localStorage.setItem('direct:' + p.id, '1'); else localStorage.removeItem('direct:' + p.id); };
+
+async function gunzipJson(res) {
+  const stream = res.body.pipeThrough(new DecompressionStream('gzip'));
+  return JSON.parse(await new Response(stream).text());
+}
+
+/** De lijsten die de tv- of telefoon-app in je account heeft gezet (null als die er niet zijn). */
+async function fromAccount(p) {
+  const res = await fetch('/api/catalog/' + p.id, { headers: { authorization: 'Bearer ' + S.token } });
+  if (!res.ok) return null;
+  const d = await gunzipJson(res);
+  const m3u = p.type === 'M3U';
+  const cats = (a) => (a || []).map(([id, name]) => ({ id, name }));
+  return {
+    updated: Number(res.headers.get('x-updated')) || 0,
+    liveCats: cats(d.liveCats),
+    live: (d.live || []).map(([id, name, logo, cat, archive, epg, url], i) => ({
+      id, name, logo, cat, archive, num: i + 1, url: m3u ? url : `${p.server}/live/${p.username}/${p.password}/${id}.m3u8`,
+    })),
+    movieCats: cats(d.movieCats),
+    movies: (d.movies || []).map(([id, name, poster, cat, rating, added, ext]) => ({
+      id, name, poster, cat, rating, added, url: m3u ? ext : `${p.server}/movie/${p.username}/${p.password}/${id}.${ext || 'mp4'}`,
+    })),
+    showCats: cats(d.showCats),
+    shows: (d.shows || []).map(([id, name, poster, cat, rating, plot]) => ({ id, name, poster, cat, rating, plot })),
+  };
+}
+
+async function loadFromAccount(p) {
+  S.loading = 'Lijsten uit je account laden…';
+  render();
+  const cat = await fromAccount(p).catch(() => null);
+  if (!cat) {
+    throw new Error('Je provider blokkeert verzoeken vanaf de IPTIMTV-server. Open de tv- of telefoon-app één keer '
+      + '(ingelogd met je IPTIMTV-account): die zet je lijsten in je account en dan verschijnen ze hier.');
+  }
+  S.cat = cat;
+}
+
 async function loadCatalog(force = false) {
   const p = active();
   if (!p) return;
   S.loading = 'Kanalen en films laden…';
   render();
+  if (force) setDirect(p, false);
   try {
-    if (p.type === 'M3U') {
+    if (isDirect(p)) {
+      await loadFromAccount(p);
+    } else if (p.type === 'M3U') {
       S.cat = parseM3u(await cached(p, 'm3u', p.m3uUrl, force));
     } else {
       const get = async (a) => {
@@ -164,6 +210,7 @@ async function loadCatalog(force = false) {
           out.push(await get(a).catch(() => []));
         }
         const [vc, vs, sc, ss] = out;
+        if (isDirect(p)) return;
         Object.assign(S.cat, buildVod(vc, vs, sc, ss));
         render();
       };
@@ -190,7 +237,24 @@ async function loadCatalog(force = false) {
     S.byId = new Map(S.cat.live.map((c) => [c.id, c]));
     S.loadError = null;
   } catch (e) {
+    // De server komt niet bij je provider: dan de lijsten uit je account proberen.
+    if (!isDirect(p)) {
+      const cat = await fromAccount(p).catch(() => null);
+      if (cat) {
+        setDirect(p, true);
+        S.vodLoading = false;
+        S.cat = cat;
+        S.byId = new Map(cat.live.map((c) => [c.id, c]));
+        S.loadError = null;
+        S.loading = null;
+        return render();
+      }
+    }
     S.loadError = String(e.message || e).slice(0, 160);
+    if (!isDirect(p) && /^Server (403|5\d\d)/.test(S.loadError)) {
+      S.loadError += ' — Je provider laat de IPTIMTV-server niet toe. Open de tv- of telefoon-app één keer (ingelogd met je IPTIMTV-account), '
+        + 'dan zet die je lijsten in je account en kun je hier kijken.';
+    }
     toast('Kon je lijsten niet laden');
     S.cat = { liveCats: [], live: [], movieCats: [], movies: [], showCats: [], shows: [] };
     S.byId = new Map();
@@ -216,7 +280,7 @@ function epgQueue(task) {
 const epgCache = new Map();
 async function nowOn(ch) {
   const p = active();
-  if (!p || p.type !== 'XTREAM') return null;
+  if (!p || p.type !== 'XTREAM' || isDirect(p)) return null;
   if (epgCache.has(ch.id)) return epgCache.get(ch.id);
   const promise = epgQueue(() => fetch(px(`${xbase(p)}&action=get_short_epg&stream_id=${ch.id}&limit=2`)))
     .then((r) => { if (r.status === 429) { epgPauseUntil = Date.now() + 60000; epgCache.delete(ch.id); throw new Error(); } return r.json(); })
@@ -550,7 +614,7 @@ function openMovie(m) {
   $('.sheet [data-act="movie-start"]').onclick = () => play([item], 0, false, 0);
   $('.sheet [data-act="movie-resume"]')?.addEventListener('click', () => play([item], 0, false, h.position));
   const p = active();
-  if (p.type === 'XTREAM') fetch(px(`${xbase(p)}&action=get_vod_info&vod_id=${m.id}`)).then((r) => r.json()).then((d) => { const el = $('#plot'); if (el) el.textContent = d?.info?.plot || ''; }).catch(() => {});
+  if (p.type === 'XTREAM' && !isDirect(p)) fetch(px(`${xbase(p)}&action=get_vod_info&vod_id=${m.id}`)).then((r) => r.json()).then((d) => { const el = $('#plot'); if (el) el.textContent = d?.info?.plot || ''; }).catch(() => {});
 }
 
 async function openShow(s) {
@@ -558,14 +622,22 @@ async function openShow(s) {
     <h1>${esc(s.name)}</h1><p class="dim">${esc(s.plot || '')}</p><div id="eps" class="dim">Afleveringen laden…</div></div></div>`);
   const p = active();
   try {
-    const d = await (await fetch(px(`${xbase(p)}&action=get_series_info&series_id=${s.id}`))).json();
     const eps = [];
     const add = (e, season) => eps.push({
       id: String(e.id), season: Number(e.season) || season, num: Number(e.episode_num) || 0, title: e.title || `Aflevering ${e.episode_num}`,
       url: `${p.server}/series/${p.username}/${p.password}/${e.id}.${e.container_extension || 'mp4'}`, image: e.info?.movie_image,
     });
-    if (Array.isArray(d.episodes)) d.episodes.forEach((list, i) => (Array.isArray(list) ? list : [list]).forEach((e) => add(e, i + 1)));
-    else Object.entries(d.episodes || {}).forEach(([k, list]) => list.forEach((e) => add(e, Number(k))));
+    if (isDirect(p)) {
+      const res = await fetch(`/api/catalog/${p.id}/series/${s.id}`, { headers: { authorization: 'Bearer ' + S.token } });
+      if (!res.ok) { $('#eps').textContent = 'Open deze serie één keer in de tv- of telefoon-app, dan staan de afleveringen hier ook.'; return; }
+      for (const [id, season, num, title, ext, image] of await gunzipJson(res)) {
+        add({ id, season, episode_num: num, title, container_extension: ext, info: { movie_image: image } }, season);
+      }
+    } else {
+      const d = await (await fetch(px(`${xbase(p)}&action=get_series_info&series_id=${s.id}`))).json();
+      if (Array.isArray(d.episodes)) d.episodes.forEach((list, i) => (Array.isArray(list) ? list : [list]).forEach((e) => add(e, i + 1)));
+      else Object.entries(d.episodes || {}).forEach(([k, list]) => list.forEach((e) => add(e, Number(k))));
+    }
     eps.sort((a, b) => a.season - b.season || a.num - b.num);
     const seasons = [...new Set(eps.map((e) => e.season))];
     const show = (season) => {
@@ -589,7 +661,25 @@ async function openShow(s) {
 
 // ---------- speler ----------
 let hls = null;
+
+/**
+ * Rechtstreeks afspelen vanaf de provider. Die streamt alleen via http, en een https-pagina mag dat niet laden;
+ * daarom een eigen afspeelpagina op http-poort 8080 (die browsers niet naar https omzetten).
+ */
+function playDirect(items, index, live, startAt) {
+  // Bij lange kanaallijsten alleen de buren meegeven, anders wordt het adres te lang.
+  const from = Math.max(0, index - 150);
+  const data = { items: items.slice(from, index + 150), i: index - from, live, startAt, token: S.token, back: location.origin + '/' };
+  const bytes = new TextEncoder().encode(JSON.stringify(data));
+  let bin = '';
+  for (let k = 0; k < bytes.length; k += 8192) bin += String.fromCharCode(...bytes.subarray(k, k + 8192));
+  const b64 = btoa(bin);
+  location.href = `http://${location.hostname}:8080/play.html#${b64}`;
+}
+
 function play(items, index, live, startAt = 0) {
+  const p = active();
+  if (p && isDirect(p) && items[index]?.url?.startsWith('http:') && location.protocol === 'https:') return playDirect(items, index, live, startAt);
   closeSheet();
   $('.player')?.remove();
   const el = document.createElement('div');
@@ -633,7 +723,7 @@ function play(items, index, live, startAt = 0) {
     $('.txt span', el).textContent = it.subtitle || '';
     $('.msg', el).classList.add('hidden');
     if (hls) { hls.destroy(); hls = null; }
-    const src = px(it.url);
+    const src = isDirect(active()) ? it.url : px(it.url);
     const isHls = /\.m3u8(\?|$)/i.test(it.url);
     // hls.js overal waar het kan; iPhone/iPad speelt HLS zelf af.
     const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -781,6 +871,11 @@ async function boot() {
   S.loading = null;
   if (active()) { S.activeId = active().id; localStorage.setItem('active', S.activeId); loadCatalog(); } else render();
 }
+
+// Terug van de afspeelpagina: kijkgeschiedenis bijwerken.
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted && S.token) api('history?limit=80').then((r) => { S.history = r.items || []; render(); }).catch(() => {});
+});
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 boot();

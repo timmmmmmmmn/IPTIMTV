@@ -83,7 +83,11 @@ object Cloud {
     /** Statistieken en geschiedenis ophalen (bij openen van de app en na inloggen). */
     suspend fun refresh() {
         if (!loggedIn) return
-        withContext(Dispatchers.Main) { Sync.pull() }
+        withContext(Dispatchers.Main) {
+            Sync.pull()
+            // Net ingelogd of een tijd niet gedaan: lijsten ook voor de website in je account zetten.
+            CatalogShare.maybeUpload(Library.active, Library.catalog)
+        }
         withContext(Dispatchers.IO) {
             runCatching {
                 val tz = -TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000

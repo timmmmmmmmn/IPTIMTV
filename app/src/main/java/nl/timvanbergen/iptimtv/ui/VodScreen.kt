@@ -228,6 +228,7 @@ fun ShowInfo(s: Show) {
     val episodes by produceState<List<Episode>?>(null, s.id) {
         val p = Library.active ?: return@produceState
         value = withContext(Dispatchers.IO) { runCatching { Xtream.episodes(p, s.id) }.getOrDefault(emptyList()) }
+        nl.timvanbergen.iptimtv.data.CatalogShare.uploadSeries(p, s.id, value.orEmpty())
     }
     val seasons = episodes.orEmpty().map { it.season }.distinct()
     // De afleveringen komen pas na het laden binnen; dan pas kan de focus op het eerste seizoen.

@@ -148,6 +148,7 @@ object Library {
                 loading = "Laden…"
                 catalog = withContext(Dispatchers.IO) { runCatching { parse(p) }.getOrDefault(Catalog()) }
                 loading = null
+                CatalogShare.maybeUpload(p, catalog)
             }
             val stale = System.currentTimeMillis() - prefs.getLong("updated_${p.id}", 0) > Settings.catalogRefresh.int * 3600_000L
             if (forceRefresh || catalog.isEmpty || stale) refreshNow(p, showProgress = catalog.isEmpty)
@@ -189,6 +190,7 @@ object Library {
             if (showProgress) loading = "Lijsten verwerken…"
             catalog = withContext(Dispatchers.IO) { parse(p) }
             prefs.edit().putLong("updated_${p.id}", System.currentTimeMillis()).apply()
+            CatalogShare.maybeUpload(p, catalog, force = true)
             error = null
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
