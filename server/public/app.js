@@ -667,7 +667,16 @@ async function openShow(s) {
 }
 
 // ---------- speler ----------
-let hls = null;
+let hls = null, mts = null;
+let mpegtsPromise = null;
+/** mpegts.js pas laden als het nodig is (voor losse .ts-streams). */
+const loadMpegts = () => (mpegtsPromise ||= new Promise((ok) => {
+  if (window.mpegts) return ok(true);
+  const sc = document.createElement('script');
+  sc.src = 'https://cdn.jsdelivr.net/npm/mpegts.js@1.8.0/dist/mpegts.js';
+  sc.onload = () => ok(true); sc.onerror = () => ok(false);
+  document.head.append(sc);
+}));
 
 /**
  * Rechtstreeks afspelen vanaf de provider. Die streamt alleen via http, en een https-pagina mag dat niet laden;
@@ -724,44 +733,91 @@ function play(items, index, live, startAt = 0) {
     if (watched >= 30) flush();
   }, 1000);
 
+  // Probeert de stream op meerdere manieren: HLS (.m3u8), daarna de losse .ts-stream via mpegts.js.
+  let attempt = 0, tries = [], errors = [], stallTimer;
+  const stopEngines = () => {
+    clearTimeout(stallTimer);
+    if (hls) { hls.destroy(); hls = null; }
+    if (mts) { try { mts.destroy(); } catch {} mts = null; }
+    video.removeAttribute('src');
+  };
   const load = () => {
     const it = items[i];
     $('.txt b', el).textContent = live ? `${S.cat.live.indexOf(S.byId.get(it.id)) + 1 || ''}  ${it.title}` : it.title;
     $('.txt span', el).textContent = it.subtitle || '';
     $('.msg', el).classList.add('hidden');
-    if (hls) { hls.destroy(); hls = null; }
-    const src = isDirect(active()) ? it.url : px(it.url);
-    const isHls = /\.m3u8(\?|$)/i.test(it.url);
-    // hls.js overal waar het kan; iPhone/iPad speelt HLS zelf af.
-    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    if (isHls && !ios && window.Hls?.isSupported()) {
-      hls = new Hls({ lowLatencyMode: false, backBufferLength: 30 });
-      hls.loadSource(src);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) fail(); });
-    } else {
-      video.src = src;
-    }
-    if (startAt && !live) video.addEventListener('loadedmetadata', () => { video.currentTime = startAt / 1000; startAt = 0; }, { once: true });
-    video.play().catch(() => {});
+    const direct = isDirect(active());
+    const src = (u) => (direct ? u : px(u));
+    tries = [it.url];
+    if (/\/live\/.+\.m3u8$/i.test(it.url)) tries.push(it.url.replace(/\.m3u8$/i, '.ts'));
+    else if (/\/live\/.+\.ts$/i.test(it.url)) tries.unshift(it.url.replace(/\.ts$/i, '.m3u8'));
+    tries = tries.map(src);
+    attempt = 0; errors = [];
+    start(it);
     if (live && it.id) {
       const ch = S.byId.get(it.id);
       if (ch) nowOn(ch).then((n) => { if (n && items[i] === it) $('.txt span', el).textContent = 'Nu: ' + n.title; });
     }
   };
-  const fail = () => {
+  const start = async (it) => {
+    stopEngines();
+    const url = tries[attempt], my = attempt;
+    const stale = () => my !== attempt || items[i] !== it;
+    const isHls = /\.m3u8(\?|$|&)/i.test(decodeURIComponent(url));
+    const isTs = /\.ts(\?|$|&)/i.test(decodeURIComponent(url));
+    // hls.js overal waar het kan; iPhone/iPad speelt HLS zelf af.
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    try {
+      if (isHls && !ios && window.Hls?.isSupported()) {
+        hls = new Hls({ lowLatencyMode: false, backBufferLength: 30 });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal && !stale()) next(`HLS: ${d.details}${d.response?.code ? ' ' + d.response.code : ''}`); });
+      } else if (isTs && (await loadMpegts()) && mpegts.isSupported()) {
+        if (stale()) return;
+        mts = mpegts.createPlayer({ type: 'mpegts', isLive: live, url }, { enableWorker: false, liveBufferLatencyChasing: live, lazyLoad: false });
+        mts.attachMediaElement(video);
+        mts.on(mpegts.Events.ERROR, (type, detail, info) => { if (!stale()) next(`TS: ${type} ${detail}${info?.code ? ' ' + info.code : ''}`); });
+        mts.load();
+      } else {
+        video.src = url;
+      }
+    } catch (e) { return next('start: ' + e.message); }
+    if (startAt && !live) video.addEventListener('loadedmetadata', () => { video.currentTime = startAt / 1000; startAt = 0; }, { once: true });
+    video.play().catch(() => {});
+    // Na 15 seconden zonder beeld de volgende vorm proberen.
+    stallTimer = setTimeout(() => { if (!stale() && video.readyState < 3) next('geen beeld na 15 s'); }, 15000);
+  };
+  const next = (why) => {
+    errors.push(`${tries[attempt].match(/\.(m3u8|ts|mp4|mkv|avi)\b/i)?.[0] || 'stream'}: ${why}`);
+    if (++attempt < tries.length) return start(items[i]);
+    stopEngines();
+    fail();
+  };
+  video.addEventListener('playing', () => clearTimeout(stallTimer));
+  const fail = async () => {
     const m = $('.msg', el);
-    m.textContent = 'Dit kan in de browser niet worden afgespeeld. Probeer de tv- of telefoon-app.';
+    const it = items[i];
+    let extra = '';
+    if (/\.(mkv|avi)$/i.test(it.url)) extra = 'Dit bestand (.mkv/.avi) kunnen browsers niet afspelen.';
+    else if (isDirect(active())) {
+      // Even kijken wat de provider op dit adres terugstuurt.
+      extra = await fetch(it.url, { method: 'GET', cache: 'no-store' })
+        .then((r) => { r.body?.cancel(); return `Je provider antwoordt met ${r.status}${r.status === 403 ? ' (geweigerd)' : ''}.`; })
+        .catch((e) => `Je browser kreeg geen antwoord van je provider (${e.message}).`);
+    }
+    m.innerHTML = `Dit kan in de browser niet worden afgespeeld. Probeer de tv- of telefoon-app.<br><small style="opacity:.7">${esc(extra)}<br>${esc(errors.join(' · '))}</small>`;
     m.classList.remove('hidden');
   };
-  video.addEventListener('error', fail);
+  // Met hls.js/mpegts.js melden die zelf hun fouten; anders de fout van de video zelf.
+  video.addEventListener('error', () => { if (hls || mts || !video.getAttribute('src')) return; next('video ' + (video.error?.code || '')); });
   video.addEventListener('ended', () => { flush(true); if (!live && i < items.length - 1) { i++; load(); } else close(); });
 
   const close = () => {
     flush();
     clearInterval(timer);
-    if (hls) { hls.destroy(); hls = null; }
-    video.pause(); video.removeAttribute('src'); video.load();
+    stopEngines();
+    video.pause(); video.load();
     el.remove();
     render();
   };
