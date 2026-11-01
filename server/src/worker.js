@@ -129,9 +129,9 @@ async function hmac(env, text) {
 
 // Hosts uit de logins van een gebruiker (alleen daarheen mag de proxy zonder handtekening).
 const hostCache = new Map();
-async function allowedHosts(env, userId) {
+async function allowedHosts(env, userId, fresh = false) {
   const hit = hostCache.get(userId);
-  if (hit && hit.at > Date.now() - 60000) return hit.hosts;
+  if (!fresh && hit && hit.at > Date.now() - 60000) return hit.hosts;
   const row = await env.DB.prepare("SELECT value FROM sync WHERE user_id = ? AND key = 'profiles'").bind(userId).first();
   const hosts = new Set();
   if (row) {
@@ -181,6 +181,30 @@ async function rewritePlaylist(env, text, base, token) {
   return out.join('\n');
 }
 
+// Cloudflare staat geen verbindingen naar een kaal IP-adres toe (fout 1003). Veel IPTV-servers gebruiken
+// juist dat; via sslip.io (een naam die naar hetzelfde IP wijst) gaat het wel.
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+function reachable(u) {
+  const x = new URL(u);
+  if (IPV4.test(x.hostname)) x.hostname = x.hostname + '.sslip.io';
+  return x.toString();
+}
+
+/** Ophalen en doorverwijzingen zelf volgen (die wijzen bij providers vaak ook naar een IP-adres). */
+async function fetchFollow(url, headers) {
+  let current = url;
+  for (let i = 0; i < 6; i++) {
+    const res = await fetch(reachable(current), { headers, redirect: 'manual' });
+    const loc = res.headers.get('location');
+    if ([301, 302, 303, 307, 308].includes(res.status) && loc) {
+      current = new URL(loc, current).toString();
+      continue;
+    }
+    return { res, finalUrl: current };
+  }
+  return { res: null, finalUrl: current };
+}
+
 async function proxy(request, env, url) {
   const token = url.searchParams.get('t');
   const target = url.searchParams.get('u');
@@ -191,15 +215,16 @@ async function proxy(request, env, url) {
   try { t = new URL(target); } catch { return new Response('Ongeldig', { status: 400, headers: cors }); }
   if (!/^https?:$/.test(t.protocol)) return new Response('Ongeldig', { status: 400, headers: cors });
   const signed = sig && sig === (await hmac(env, t.toString()));
-  if (!signed && !(await allowedHosts(env, userId)).has(t.host)) {
+  // Net een login toegevoegd? Dan is het lijstje in het geheugen misschien nog oud: opnieuw kijken.
+  if (!signed && !(await allowedHosts(env, userId)).has(t.host) && !(await allowedHosts(env, userId, true)).has(t.host)) {
     return new Response('Deze server hoort niet bij je logins', { status: 403, headers: cors });
   }
   const headers = { 'user-agent': url.searchParams.get('ua') || 'IPTIMTV/1.0' };
   const range = request.headers.get('range');
   if (range) headers.range = range;
-  const res = await fetch(t.toString(), { headers, redirect: 'follow' });
+  const { res, finalUrl } = await fetchFollow(t.toString(), headers);
+  if (!res) return new Response('Te veel doorverwijzingen', { status: 502, headers: cors });
   const type = res.headers.get('content-type') || '';
-  const finalUrl = res.url || t.toString();
   if (/mpegurl/i.test(type) || /\.m3u8(\?|$)/i.test(finalUrl)) {
     const text = await res.text();
     if (text.trimStart().startsWith('#EXTM3U') && /#EXT-X-/.test(text)) {

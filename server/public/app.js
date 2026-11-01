@@ -97,7 +97,7 @@ async function cached(p, name, url, force) {
     if (hit && Date.now() - Number(hit.headers.get('x-at') || 0) < 12 * 3600e3) return hit.text();
   }
   const res = await fetch(px(url));
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(`Server ${res.status}: ${(await res.text()).slice(0, 120)}`);
   const text = await res.text();
   if (cache) await cache.put(key, new Response(text, { headers: { 'x-at': String(Date.now()) } })).catch(() => {});
   return text;
@@ -135,10 +135,21 @@ async function loadCatalog(force = false) {
     if (p.type === 'M3U') {
       S.cat = parseM3u(await cached(p, 'm3u', p.m3uUrl, force));
     } else {
-      const get = async (a) => JSON.parse(await cached(p, a, `${xbase(p)}&action=${a}`, force) || '[]');
-      const [lc, ls, vc, vs, sc, ss] = await Promise.all(
-        ['get_live_categories', 'get_live_streams', 'get_vod_categories', 'get_vod_streams', 'get_series_categories', 'get_series'].map((a) => get(a).catch(() => [])),
+      const get = async (a) => {
+        const text = await cached(p, a, `${xbase(p)}&action=${a}`, force);
+        try {
+          return JSON.parse(text || '[]');
+        } catch {
+          // Geen lijst maar bijvoorbeeld een foutpagina: niet onthouden, en laten zien wat er terugkwam.
+          if ('caches' in window) (await caches.open('iptimtv-data')).delete(`/cache/${p.id}/${a}`);
+          throw new Error('Je provider gaf geen lijst terug: ' + String(text).slice(0, 100));
+        }
+      };
+      const results = await Promise.allSettled(
+        ['get_live_categories', 'get_live_streams', 'get_vod_categories', 'get_vod_streams', 'get_series_categories', 'get_series'].map(get),
       );
+      if (results[1].status === 'rejected') throw results[1].reason;
+      const [lc, ls, vc, vs, sc, ss] = results.map((r) => (r.status === 'fulfilled' ? r.value : []));
       const arr = (x) => (Array.isArray(x) ? x : []);
       S.cat = {
         liveCats: arr(lc).map((c) => ({ id: String(c.category_id), name: c.category_name })),
@@ -156,7 +167,9 @@ async function loadCatalog(force = false) {
       };
     }
     S.byId = new Map(S.cat.live.map((c) => [c.id, c]));
+    S.loadError = null;
   } catch (e) {
+    S.loadError = String(e.message || e).slice(0, 160);
     toast('Kon je lijsten niet laden');
     S.cat = { liveCats: [], live: [], movieCats: [], movies: [], showCats: [], shows: [] };
     S.byId = new Map();
@@ -243,6 +256,9 @@ const channelTile = (c, list) => `
 function viewHome() {
   const u = udata(), cat = S.cat;
   if (!cat) return '';
+  if (!cat.live.length && !cat.movies.length && S.loadError) {
+    return `<div class="empty"><b>Je lijsten konden niet geladen worden</b>${esc(S.loadError)}<br><br><button class="btn" data-act="reload">Opnieuw proberen</button></div>`;
+  }
   const fav = u.favorites.map((id) => S.byId.get(id)).filter(Boolean);
   const cont = S.history.filter((h) => (h.kind === 'movie' || h.kind === 'episode') && h.position > 60e3 && (!h.duration || h.position < h.duration - 180e3));
   let html = `<h2>Mijn kanalen</h2>`;
@@ -451,13 +467,22 @@ function renderAddLogin(first, error = '', type = 'XTREAM') {
     S.profiles = [...S.profiles, p];
     await pushSync('profiles', S.profiles);
     if (type === 'XTREAM') {
+      let problem = null;
       try {
-        const info = await (await fetch(px(xbase(p)))).json();
-        if (String(info?.user_info?.auth) !== '1') throw new Error();
+        const res = await fetch(px(xbase(p)));
+        const text = await res.text();
+        if (!res.ok) problem = `De server kon je provider niet bereiken (${res.status}): ${text.slice(0, 120)}`;
+        else {
+          const info = JSON.parse(text);
+          if (String(info?.user_info?.auth) !== '1') problem = 'Je provider zegt dat gebruikersnaam of wachtwoord niet klopt.';
+        }
       } catch {
+        problem = 'Je provider gaf een onverwacht antwoord. Mogelijk weigert hij verbindingen vanaf de IPTIMTV-server.';
+      }
+      if (problem) {
         S.profiles = S.profiles.filter((x) => x.id !== id);
         await pushSync('profiles', S.profiles);
-        return first ? renderAddLogin(true, 'Inloggen bij je provider mislukt. Kloppen server, gebruikersnaam en wachtwoord?', type) : toast('Inloggen bij je provider mislukt');
+        return first ? renderAddLogin(true, problem, type) : toast(problem);
       }
     }
     S.activeId = id; localStorage.setItem('active', id);
