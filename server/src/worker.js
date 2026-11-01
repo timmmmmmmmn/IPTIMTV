@@ -332,6 +332,37 @@ async function api(request, env, path) {
     return json({ ok: true });
   }
 
+  // Verbinding testen: wat krijgt de server terug van de provider(s) van deze gebruiker? (Zonder wachtwoord in de uitvoer.)
+  if (path === 'diag' && m === 'GET') {
+    const row = await env.DB.prepare("SELECT value FROM sync WHERE user_id = ? AND key = 'profiles'").bind(user.id).first();
+    const profiles = row ? JSON.parse(await unseal(env, row.value)) : [];
+    const lines = [];
+    const hide = (t, p) => String(t).split(p.password || '\u0000').join('***').split(encodeURIComponent(p.password || '\u0000')).join('***');
+    for (const p of profiles) {
+      const base = p.type === 'M3U' ? p.m3uUrl : `${p.server}/player_api.php?username=${encodeURIComponent(p.username)}&password=${encodeURIComponent(p.password)}`;
+      let host = '?';
+      try { host = new URL(base).host; } catch {}
+      lines.push(`Login "${p.name}" (${p.type}) – server ${host}${IPV4.test(host.split(':')[0]) ? ' (IP-adres)' : ''}`);
+      for (const [label, ua] of [['IPTIMTV', 'IPTIMTV/1.0'], ['VLC', 'VLC/3.0.20 LibVLC/3.0.20'], ['IPTIMTV opnieuw', 'IPTIMTV/1.0']]) {
+        const started = Date.now();
+        try {
+          const { res } = await fetchFollow(base, { 'user-agent': ua });
+          const text = await res.text();
+          lines.push(`  ${label}: ${res.status} ${res.statusText} · ${Date.now() - started} ms · server: ${res.headers.get('server') || '-'}` +
+            (res.headers.get('retry-after') ? ` · wacht ${res.headers.get('retry-after')} s` : '') +
+            ` · ${hide(text.slice(0, 140).replace(/\s+/g, ' '), p)}`);
+        } catch (e) {
+          lines.push(`  ${label}: geen verbinding (${e.message})`);
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+    const egress = await fetch('https://cloudflare.com/cdn-cgi/trace').then((r) => r.text()).catch(() => '');
+    lines.push(`Server-locatie: ${(egress.match(/colo=(\w+)/) || [])[1] || '?'}`);
+    console.log('diag', user.username, lines.join(' | '));
+    return json({ lines });
+  }
+
   if (path === 'history' && m === 'GET') {
     const limit = Math.min(int(new URL(request.url).searchParams.get('limit')) || 40, 200);
     const rows = await env.DB.prepare(

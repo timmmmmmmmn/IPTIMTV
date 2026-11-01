@@ -291,7 +291,8 @@ function viewHome() {
   const u = udata(), cat = S.cat;
   if (!cat) return '';
   if (!cat.live.length && !cat.movies.length && S.loadError) {
-    return `<div class="empty"><b>Je lijsten konden niet geladen worden</b>${esc(S.loadError)}<br><br><button class="btn" data-act="reload">Opnieuw proberen</button></div>`;
+    return `<div class="empty"><b>Je lijsten konden niet geladen worden</b>${esc(S.loadError)}<br><br>
+      <div class="btns" style="justify-content:center"><button class="btn" data-act="reload">Opnieuw proberen</button><button class="btn primary" data-act="diag">Verbinding testen</button></div></div>`;
   }
   const fav = u.favorites.map((id) => S.byId.get(id)).filter(Boolean);
   const cont = S.history.filter((h) => (h.kind === 'movie' || h.kind === 'episode') && h.position > 60e3 && (!h.duration || h.position < h.duration - 180e3));
@@ -440,7 +441,7 @@ function viewSettings() {
       <div class="line"><div class="txt"><b>${esc(x.name)}</b><span>${x.type === 'M3U' ? 'M3U-playlist' : 'Xtream · ' + esc(x.server.replace(/^https?:\/\//, ''))}</span></div>
         ${x.id === p.id ? '<b style="color:var(--accent)">In gebruik</b>' : `<button class="btn" data-use="${esc(x.id)}">Gebruiken</button>`}
         <button class="btn danger" data-del="${esc(x.id)}">Verwijderen</button></div>`).join('')}</div>
-    <div class="btns" style="margin-top:12px"><button class="btn primary" data-act="add">Login toevoegen</button><button class="btn" data-act="reload">Alles opnieuw ophalen</button></div>
+    <div class="btns" style="margin-top:12px"><button class="btn primary" data-act="add">Login toevoegen</button><button class="btn" data-act="reload">Alles opnieuw ophalen</button><button class="btn" data-act="diag">Verbinding testen</button></div>
     <h2 style="margin-left:0">Apps</h2>
     <div class="card"><p class="dim" style="margin-top:0">Op de iPhone: tik in Safari op <b>Delen</b> en kies <b>Zet op beginscherm</b>. Voor Android-tv en telefoon:</p>
       <div class="btns"><a class="btn" href="https://github.com/timmmmmmmmn/IPTIMTV/releases/latest" target="_blank" rel="noopener">Download de Android-apps</a></div></div>
@@ -729,6 +730,7 @@ document.addEventListener('click', async (e) => {
   else if (d.act === 'logout') logout();
   else if (d.act === 'add') renderAddLogin(false);
   else if (d.act === 'reload') { epgCache.clear(); loadCatalog(true); }
+  else if (d.act === 'diag') runDiag();
 });
 document.addEventListener('input', (e) => {
   if (e.target.id !== 'q') return;
@@ -743,6 +745,21 @@ window.addEventListener('popstate', () => {
   if (pl) return pl._close();
   if ($('.sheet')) return closeSheet();
 });
+
+/** Laat zien wat de server terugkrijgt van je provider (zonder wachtwoord). */
+async function runDiag() {
+  sheet(`<div class="section" style="max-width:900px"><h1 style="margin:0 0 8px">Verbinding testen</h1>
+    <p class="dim">De IPTIMTV-server probeert nu je provider te bereiken. Dit duurt ongeveer 10 seconden.</p>
+    <pre id="diag" class="card" style="white-space:pre-wrap;font-size:13px;line-height:1.5">Bezig…</pre>
+    <div class="btns"><button class="btn primary" id="copydiag">Kopiëren</button></div></div>`);
+  try {
+    const r = await api('diag');
+    $('#diag').textContent = r.lines.join('\n');
+  } catch (e) {
+    $('#diag').textContent = 'Test mislukt: ' + e.message;
+  }
+  $('#copydiag').onclick = () => navigator.clipboard?.writeText($('#diag').textContent).then(() => toast('Gekopieerd'));
+}
 
 function logout() {
   api('logout', { method: 'POST' }).catch(() => {});
