@@ -674,7 +674,7 @@ function playDirect(items, index, live, startAt) {
   let bin = '';
   for (let k = 0; k < bytes.length; k += 8192) bin += String.fromCharCode(...bytes.subarray(k, k + 8192));
   const b64 = btoa(bin);
-  location.href = `http://${location.hostname}:8080/play.html#${b64}`;
+  location.href = `http://${location.hostname}:8080/play#${b64}`;
 }
 
 function play(items, index, live, startAt = 0) {
