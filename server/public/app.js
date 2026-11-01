@@ -96,7 +96,16 @@ async function cached(p, name, url, force) {
     const hit = await cache.match(key);
     if (hit && Date.now() - Number(hit.headers.get('x-at') || 0) < 12 * 3600e3) return hit.text();
   }
-  const res = await fetch(px(url));
+  let res;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    res = await fetch(px(url) + (force ? '&fresh=1' : ''));
+    if (res.status !== 429) break;
+    // Provider remt af: steeds iets langer wachten.
+    S.loading = 'Je provider vraagt om even te wachten…';
+    render();
+    await new Promise((r) => setTimeout(r, (attempt + 1) * 4000));
+  }
+  if (res.status === 429) throw new Error('Je provider krijgt even te veel verzoeken (429). Wacht een paar minuten en probeer het opnieuw.');
   if (!res.ok) throw new Error(`Server ${res.status}: ${(await res.text()).slice(0, 120)}`);
   const text = await res.text();
   if (cache) await cache.put(key, new Response(text, { headers: { 'x-at': String(Date.now()) } })).catch(() => {});
@@ -145,18 +154,20 @@ async function loadCatalog(force = false) {
           throw new Error('Je provider gaf geen lijst terug: ' + String(text).slice(0, 100));
         }
       };
-      const results = await Promise.allSettled(
-        ['get_live_categories', 'get_live_streams', 'get_vod_categories', 'get_vod_streams', 'get_series_categories', 'get_series'].map(get),
-      );
-      if (results[1].status === 'rejected') throw results[1].reason;
-      const [lc, ls, vc, vs, sc, ss] = results.map((r) => (r.status === 'fulfilled' ? r.value : []));
+      // Eén voor één (providers remmen af bij te veel tegelijk); eerst live tv, films en series daarna.
+      const lc = await get('get_live_categories').catch(() => []);
+      const ls = await get('get_live_streams');
       const arr = (x) => (Array.isArray(x) ? x : []);
-      S.cat = {
-        liveCats: arr(lc).map((c) => ({ id: String(c.category_id), name: c.category_name })),
-        live: arr(ls).map((c, i) => ({
-          id: String(c.stream_id), name: c.name, logo: c.stream_icon, cat: String(c.category_id), num: i + 1,
-          url: `${p.server}/live/${p.username}/${p.password}/${c.stream_id}.m3u8`,
-        })),
+      const later = async () => {
+        const out = [];
+        for (const a of ['get_vod_categories', 'get_vod_streams', 'get_series_categories', 'get_series']) {
+          out.push(await get(a).catch(() => []));
+        }
+        const [vc, vs, sc, ss] = out;
+        Object.assign(S.cat, buildVod(vc, vs, sc, ss));
+        render();
+      };
+      const buildVod = (vc, vs, sc, ss) => ({
         movieCats: arr(vc).map((c) => ({ id: String(c.category_id), name: c.category_name })),
         movies: arr(vs).map((m) => ({
           id: String(m.stream_id), name: m.name, poster: m.stream_icon, cat: String(m.category_id), rating: m.rating, added: Number(m.added) || 0,
@@ -164,6 +175,16 @@ async function loadCatalog(force = false) {
         })),
         showCats: arr(sc).map((c) => ({ id: String(c.category_id), name: c.category_name })),
         shows: arr(ss).map((s) => ({ id: String(s.series_id), name: s.name, poster: s.cover, cat: String(s.category_id), plot: s.plot, rating: s.rating })),
+      });
+      S.vodLoading = true;
+      setTimeout(() => later().finally(() => { S.vodLoading = false; render(); }), 500);
+      S.cat = {
+        liveCats: arr(lc).map((c) => ({ id: String(c.category_id), name: c.category_name })),
+        live: arr(ls).map((c, i) => ({
+          id: String(c.stream_id), name: c.name, logo: c.stream_icon, cat: String(c.category_id), num: i + 1,
+          url: `${p.server}/live/${p.username}/${p.password}/${c.stream_id}.m3u8`,
+        })),
+        movieCats: [], movies: [], showCats: [], shows: [],
       };
     }
     S.byId = new Map(S.cat.live.map((c) => [c.id, c]));
@@ -178,14 +199,27 @@ async function loadCatalog(force = false) {
   render();
 }
 
+// Gids-verzoeken één tegelijk met een korte pauze; na een 429 een minuut niet.
+let epgChain = Promise.resolve();
+let epgPauseUntil = 0;
+function epgQueue(task) {
+  const run = epgChain.then(async () => {
+    if (Date.now() < epgPauseUntil) throw new Error('pauze');
+    await new Promise((r) => setTimeout(r, 300));
+    return task();
+  });
+  epgChain = run.catch(() => {});
+  return run;
+}
+
 // Nu-op-tv per kanaal (Xtream short EPG), alleen voor wat in beeld komt.
 const epgCache = new Map();
 async function nowOn(ch) {
   const p = active();
   if (!p || p.type !== 'XTREAM') return null;
   if (epgCache.has(ch.id)) return epgCache.get(ch.id);
-  const promise = fetch(px(`${xbase(p)}&action=get_short_epg&stream_id=${ch.id}&limit=2`))
-    .then((r) => r.json())
+  const promise = epgQueue(() => fetch(px(`${xbase(p)}&action=get_short_epg&stream_id=${ch.id}&limit=2`)))
+    .then((r) => { if (r.status === 429) { epgPauseUntil = Date.now() + 60000; epgCache.delete(ch.id); throw new Error(); } return r.json(); })
     .then((d) => {
       const dec = (s) => { try { return decodeURIComponent(escape(atob(s))); } catch { return s; } };
       const now = Date.now() / 1000;
@@ -310,7 +344,7 @@ function viewVod(kind) {
   const movies = kind === 'movies';
   const cats = movies ? S.cat.movieCats : S.cat.showCats;
   const items = movies ? S.cat.movies : S.cat.shows;
-  if (!items.length) return `<div class="empty"><b>Geen ${movies ? 'films' : 'series'}</b></div>`;
+  if (!items.length) return `<div class="empty"><b>${S.vodLoading ? (movies ? 'Films' : 'Series') + ' laden…' : 'Geen ' + (movies ? 'films' : 'series')}</b></div>`;
   const all = [{ id: '__new', name: 'Nieuw toegevoegd' }, ...cats];
   const curId = (movies ? S.movieCat : S.showCat) || '__new';
   const list = curId === '__new' ? [...items].sort((a, b) => (b.added || 0) - (a.added || 0)).slice(0, 120) : items.filter((m) => m.cat === curId);

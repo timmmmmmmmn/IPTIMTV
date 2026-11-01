@@ -186,7 +186,8 @@ async function rewritePlaylist(env, text, base, token) {
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
 function reachable(u) {
   const x = new URL(u);
-  if (IPV4.test(x.hostname)) x.hostname = x.hostname + '.sslip.io';
+  const privateNet = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(x.hostname);
+  if (IPV4.test(x.hostname) && !privateNet) x.hostname = x.hostname + '.sslip.io';
   return x.toString();
 }
 
@@ -222,8 +223,30 @@ async function proxy(request, env, url) {
   const headers = { 'user-agent': url.searchParams.get('ua') || 'IPTIMTV/1.0' };
   const range = request.headers.get('range');
   if (range) headers.range = range;
-  const { res, finalUrl } = await fetchFollow(t.toString(), headers);
+  // Grote lijsten (kanalen, films, series) een half uur bewaren: providers remmen af bij te veel verzoeken.
+  const action = t.pathname.endsWith('/player_api.php') ? t.searchParams.get('action') : null;
+  const cacheable = !range && ['get_live_categories', 'get_live_streams', 'get_vod_categories', 'get_vod_streams',
+    'get_series_categories', 'get_series'].includes(action) && url.searchParams.get('fresh') !== '1';
+  const cacheKey = new Request('https://cache.iptimtv/' + (await sha256(t.toString())));
+  if (cacheable) {
+    const hit = await caches.default.match(cacheKey);
+    if (hit) return new Response(hit.body, { headers: { ...cors, 'content-type': 'application/json', 'x-cache': 'hit' } });
+  }
+  let { res, finalUrl } = await fetchFollow(t.toString(), headers);
+  // Te veel verzoeken: even wachten en nog één keer proberen.
+  if (res && res.status === 429) {
+    const wait = Math.min(Number(res.headers.get('retry-after')) || 2, 5);
+    await new Promise((r) => setTimeout(r, wait * 1000));
+    ({ res, finalUrl } = await fetchFollow(t.toString(), headers));
+  }
   if (!res) return new Response('Te veel doorverwijzingen', { status: 502, headers: cors });
+  if (cacheable && res.ok) {
+    const text = await res.text();
+    if (/^\s*[\[{]/.test(text)) {
+      await caches.default.put(cacheKey, new Response(text, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=1800' } }));
+    }
+    return new Response(text, { headers: { ...cors, 'content-type': 'application/json' } });
+  }
   const type = res.headers.get('content-type') || '';
   if (/mpegurl/i.test(type) || /\.m3u8(\?|$)/i.test(finalUrl)) {
     const text = await res.text();
