@@ -11,8 +11,11 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
-/** Een competitie; [country] is het land waar hij speelt (null = Europees, dan telt Nederland als eigen land). */
-class League(val id: String, val name: String, val country: String?)
+/**
+ * Een competitie; [country] is het land waar hij speelt (null = Europees, dan telt Nederland als eigen land).
+ * [words]: hoe de gids hem noemt; [broadcasters]: zenders die hem meestal uitzenden.
+ */
+class League(val id: String, val name: String, val country: String?, val words: List<String>, val broadcasters: List<String>)
 
 class Team(val name: String, val short: String, val logo: String?, val score: String?)
 
@@ -33,22 +36,31 @@ class SportHit(val channel: Channel, val reason: String, val score: Int, val pro
 
 /** Wedstrijden van vandaag (via de openbare ESPN-uitslagen) en zoeken naar zenders die ze uitzenden. */
 object Sport {
+    private val uefa = listOf("ziggo sport", "rtl 7", "tnt sports", "amazon prime", "prime video", "sky sport", "sky sports", "canal+",
+        "movistar", "dazn", "rmc sport", "bein", "cbs sports", "paramount", "sport tv", "veronica")
     val leagues = listOf(
-        League("ned.1", "Eredivisie", "NL"),
-        League("ned.2", "Keuken Kampioen Divisie", "NL"),
-        League("ned.cup", "KNVB Beker", "NL"),
-        League("uefa.champions", "Champions League", null),
-        League("uefa.europa", "Europa League", null),
-        League("uefa.europa.conf", "Conference League", null),
-        League("eng.1", "Premier League", "UK"),
-        League("esp.1", "La Liga", "ES"),
-        League("ita.1", "Serie A", "IT"),
-        League("ger.1", "Bundesliga", "DE"),
-        League("fra.1", "Ligue 1", "FR"),
-        League("por.1", "Liga Portugal", "PT"),
-        League("eng.fa", "FA Cup", "UK"),
-        League("uefa.nations", "Nations League", null),
+        League("ned.1", "Eredivisie", "NL", listOf("eredivisie"), listOf("espn")),
+        League("ned.2", "Keuken Kampioen Divisie", "NL", listOf("keuken kampioen", "kkd", "eerste divisie"), listOf("espn")),
+        League("ned.cup", "KNVB Beker", "NL", listOf("knvb beker", "knvb-beker", "toto knvb"), listOf("espn", "npo 1")),
+        League("uefa.champions", "Champions League", null, listOf("champions league", "uefa champions", "ucl"), uefa),
+        League("uefa.europa", "Europa League", null, listOf("europa league", "uel"), uefa),
+        League("uefa.europa.conf", "Conference League", null, listOf("conference league", "uecl"), uefa),
+        League("eng.1", "Premier League", "UK", listOf("premier league", "epl", "barclays"),
+            listOf("viaplay", "sky sports", "tnt sports", "amazon prime", "prime video", "canal+", "nbc", "peacock", "usa network",
+                "dazn", "bein", "supersport", "optus", "premier league")),
+        League("esp.1", "La Liga", "ES", listOf("la liga", "laliga"),
+            listOf("ziggo sport", "movistar", "dazn", "laliga tv", "premier sports", "espn", "bein")),
+        League("ita.1", "Serie A", "IT", listOf("serie a"), listOf("ziggo sport", "dazn", "sky sport", "tnt sports", "cbs sports", "paramount", "bein")),
+        League("ger.1", "Bundesliga", "DE", listOf("bundesliga"), listOf("viaplay", "sky sport", "sky sports", "dazn", "espn", "sport1")),
+        League("fra.1", "Ligue 1", "FR", listOf("ligue 1"), listOf("ligue 1+", "dazn", "bein", "canal+", "espn")),
+        League("por.1", "Liga Portugal", "PT", listOf("liga portugal", "primeira liga", "liga betclic"), listOf("sport tv", "btv", "benfica tv", "dazn", "eleven")),
+        League("eng.fa", "FA Cup", "UK", listOf("fa cup"), listOf("bbc one", "bbc", "itv", "espn", "tnt sports")),
+        League("uefa.nations", "Nations League", null, listOf("nations league"),
+            listOf("npo 1", "npo", "sky sports", "itv", "bbc", "das erste", "zdf", "rtl", "tf1", "rai", "la 1", "rtp")),
     )
+
+    // Algemene voetbalwoorden in de gids (sterker als er ook "live" bij staat).
+    private val footballWords = listOf("voetbal", "football", "soccer", "futbol", "calcio", "fussball", "fußball", "live")
 
     suspend fun today(date: LocalDate = LocalDate.now()): List<Match> = withContext(Dispatchers.IO) {
         val day = date.format(DateTimeFormatter.BASIC_ISO_DATE)
@@ -99,10 +111,9 @@ object Sport {
         return listOfNotNull(plain(t.name), plain(t.short), core, first).filter { it.length >= 2 }.distinct()
     }
 
-    /** Komt een van de namen als heel woord voor in de tekst? ("az" wel in "AZ - Ajax", niet in "Lazio") */
-    private fun mentions(text: String, names: List<String>) = names.any { n ->
-        Regex("(^|[^a-z0-9])" + Regex.escape(n) + "($|[^a-z0-9])").containsMatchIn(text)
-    }
+    /** Komt een van de namen als heel woord voor? ("az" wel in "AZ - Ajax", niet in "Lazio"); één regex voor de hele lijst. */
+    private fun words(names: List<String>) =
+        Regex("(^|[^a-z0-9])(" + names.joinToString("|") { Regex.escape(it) } + ")($|[^a-z0-9])")
 
     // Landcodes zoals providers ze voor kanalen en groepen zetten ("NL | ESPN 1", "UK: Sky Sports", "[AR] ...").
     private val countryWords = mapOf(
@@ -118,6 +129,11 @@ object Sport {
         "AR" to listOf("ar", "arg", "argentina"),
         "TR" to listOf("tr", "tur", "turkey", "turkiye"),
         "AU" to listOf("au", "aus", "australia"),
+        "MX" to listOf("mx", "mex", "mexico"),
+        "BR" to listOf("br", "bra", "brasil", "brazil"),
+        "CA" to listOf("ca", "can", "canada"),
+        "LATAM" to listOf("latam", "latino"),
+        "ARAB" to listOf("ara", "arab", "arabic", "mena"),
     )
     // Merken die maar in één land zitten.
     private val brands = mapOf(
@@ -142,44 +158,72 @@ object Sport {
     }
 
     /**
-     * Zoekt kanalen die de wedstrijd (vrijwel zeker) uitzenden:
-     * een programma in de gids rond de aftrap met beide clubs in de titel, of een eventkanaal met beide clubs in de naam.
-     * Volgorde: kanalen uit het land van de competitie, dan Nederland/Engeland, dan de rest.
+     * Zoekt kanalen die de wedstrijd uitzenden, van zeker naar waarschijnlijk:
+     * beide clubs in de gids rond de aftrap (100), een eventkanaal met beide clubs (90), één club in de gids (75),
+     * de competitie in de gids (55), voetbal in de gids op een zender van de competitie (45), en zenders die de competitie
+     * meestal uitzenden (30). Binnen elke zekerheid eerst het land van de competitie, dan Nederland/Engeland, dan de rest.
      */
     suspend fun channelsFor(m: Match, catalog: Catalog, epg: Epg?): List<SportHit> = withContext(Dispatchers.Default) {
-        val homeNames = names(m.home)
-        val awayNames = names(m.away)
+        val homeRe = words(names(m.home))
+        val awayRe = words(names(m.away))
+        val leagueRe = words(m.league.words)
+        val footballRe = words(footballWords)
+        val broadcastRe = words(m.league.broadcasters)
+        val league = m.league
+        val home = league.country ?: "NL"
         val hits = HashMap<String, SportHit>()
+        val countries = HashMap<String, String?>()
+        fun country(ch: Channel) = countries.getOrPut(ch.id) { countryOf(ch, catalog) }
         fun add(ch: Channel, reason: String, score: Int, p: Program?) {
             val old = hits[ch.id]
-            if (old == null || score > old.score) hits[ch.id] = SportHit(ch, reason, score, p, countryOf(ch, catalog))
+            if (old == null || score > old.score) hits[ch.id] = SportHit(ch, reason, score, p, country(ch))
         }
+        fun broadcaster(ch: Channel) = broadcastRe.containsMatchIn(plain(ch.name))
 
         if (epg != null) {
             val programs = runCatching {
-                epg.findInWindow(homeNames + awayNames, m.start - 30 * 60_000, m.start + 130 * 60_000)
+                epg.findInWindow(names(m.home) + names(m.away) + league.words + footballWords, m.start - 60 * 60_000, m.start + 130 * 60_000, limit = 2000)
             }.getOrDefault(emptyList())
             val byEpg = catalog.channels.filter { it.epgId != null }.groupBy { it.epgId!!.lowercase() }
             programs.forEach { p ->
+                // Rond de aftrap begonnen, of loopt over de aftrap heen (geen samenvatting later op de dag).
+                val onTime = p.start in (m.start - 60 * 60_000)..(m.start + 20 * 60_000) ||
+                    (p.start <= m.start && p.stop >= m.start + 30 * 60_000)
+                if (!onTime) return@forEach
+                val chs = byEpg[p.channelKey] ?: return@forEach
                 val t = plain(p.title + " " + (p.description ?: ""))
-                val both = mentions(t, homeNames) && mentions(t, awayNames)
-                // Rond de aftrap begonnen (live-uitzending, geen samenvatting later op de dag).
-                val onTime = p.start in (m.start - 45 * 60_000)..(m.start + 20 * 60_000)
-                if (both && onTime) byEpg[p.channelKey]?.forEach { add(it, "In de gids: ${p.title} (${clock(p.start)})", 100, p) }
+                val h = homeRe.containsMatchIn(t)
+                val a = awayRe.containsMatchIn(t)
+                val what = "${p.title} (${clock(p.start)})"
+                chs.forEach { ch ->
+                    when {
+                        h && a -> add(ch, "In de gids: $what", 100, p)
+                        h || a -> add(ch, "In de gids: $what", 75, p)
+                        leagueRe.containsMatchIn(t) -> add(ch, "${league.name} in de gids: $what", 55, p)
+                        footballRe.containsMatchIn(t) && broadcaster(ch) -> add(ch, "Voetbal in de gids: $what", 45, p)
+                    }
+                }
             }
         }
         catalog.channels.forEach { ch ->
             val n = plain(ch.name)
-            if (mentions(n, homeNames) && mentions(n, awayNames)) add(ch, "Kanaal speciaal voor deze wedstrijd", 90, null)
+            if (homeRe.containsMatchIn(n) && awayRe.containsMatchIn(n)) add(ch, "Kanaal speciaal voor deze wedstrijd", 90, null)
+            else if (broadcaster(ch) && country(ch).let { it == null || it == home || it == "NL" || it == "UK" || it == league.country }) {
+                add(ch, "Zendt de ${league.name} meestal uit", 30, null)
+            }
         }
 
-        val home = m.league.country ?: "NL"
         fun tier(c: String?) = when (c) {
             home -> 0
             "NL", "UK" -> 1
             else -> 2
         }
-        hits.values.sortedWith(compareBy<SportHit>({ tier(it.country) }, { -it.score }, { it.channel.name })).take(60)
+        fun level(s: Int) = when {
+            s >= 75 -> 0
+            s >= 45 -> 1
+            else -> 2
+        }
+        hits.values.sortedWith(compareBy<SportHit>({ level(it.score) }, { tier(it.country) }, { -it.score }, { it.channel.name })).take(60)
     }
 
     private fun clock(ms: Long) = java.text.SimpleDateFormat("HH:mm", java.util.Locale("nl")).format(java.util.Date(ms))

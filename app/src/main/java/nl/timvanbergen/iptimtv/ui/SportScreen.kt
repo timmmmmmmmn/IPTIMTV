@@ -159,6 +159,7 @@ private fun TeamLogo(t: Team) {
 private fun countryName(c: String) = mapOf(
     "NL" to "Nederland", "BE" to "België", "UK" to "Engeland", "DE" to "Duitsland", "ES" to "Spanje", "IT" to "Italië",
     "FR" to "Frankrijk", "PT" to "Portugal", "US" to "VS", "AR" to "Argentinië", "TR" to "Turkije", "AU" to "Australië",
+    "MX" to "Mexico", "BR" to "Brazilië", "CA" to "Canada", "LATAM" to "Latijns-Amerika", "ARAB" to "Arabisch",
 )[c] ?: c
 
 /** Een wedstrijd: op de achtergrond zoeken we alle zenders die hem (waarschijnlijk) uitzenden. */
@@ -198,7 +199,7 @@ fun MatchInfo(m: Match) {
         Spacer(Modifier.height(20.dp))
         when {
             hits == null -> T("Zenders zoeken…", color = C.dim, size = 18.sp)
-            hits!!.isEmpty() -> T("Geen zender gevonden die deze wedstrijd zeker uitzendt.", color = C.dim, size = 18.sp, maxLines = 2)
+            hits!!.isEmpty() -> T("Geen zender gevonden die deze wedstrijd uitzendt.", color = C.dim, size = 18.sp, maxLines = 2)
             else -> {
                 T("Hier is hij (waarschijnlijk) te zien", size = 20.sp, weight = FontWeight.Bold)
                 Spacer(Modifier.height(10.dp))

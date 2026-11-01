@@ -446,20 +446,33 @@ function viewSearch() {
 }
 
 // ---------- sport ----------
-const LEAGUES = [['ned.1', 'Eredivisie'], ['ned.2', 'Keuken Kampioen Divisie'], ['ned.cup', 'KNVB Beker'], ['uefa.champions', 'Champions League'],
-  ['uefa.europa', 'Europa League'], ['uefa.europa.conf', 'Conference League'], ['eng.1', 'Premier League'], ['esp.1', 'La Liga'],
-  ['ita.1', 'Serie A'], ['ger.1', 'Bundesliga'], ['fra.1', 'Ligue 1'], ['por.1', 'Liga Portugal']];
+// [id, naam, land, woorden in de gids, zenders die hem meestal uitzenden] — gelijk aan Sport.kt in de app.
+const UEFA_TV = ['ziggo sport', 'rtl 7', 'tnt sports', 'amazon prime', 'prime video', 'sky sport', 'sky sports', 'canal+', 'movistar', 'dazn', 'rmc sport', 'bein', 'cbs sports', 'paramount', 'sport tv', 'veronica'];
+const LEAGUES = [
+  ['ned.1', 'Eredivisie', 'NL', ['eredivisie'], ['espn']],
+  ['ned.2', 'Keuken Kampioen Divisie', 'NL', ['keuken kampioen', 'kkd', 'eerste divisie'], ['espn']],
+  ['ned.cup', 'KNVB Beker', 'NL', ['knvb beker', 'knvb-beker', 'toto knvb'], ['espn', 'npo 1']],
+  ['uefa.champions', 'Champions League', null, ['champions league', 'uefa champions', 'ucl'], UEFA_TV],
+  ['uefa.europa', 'Europa League', null, ['europa league', 'uel'], UEFA_TV],
+  ['uefa.europa.conf', 'Conference League', null, ['conference league', 'uecl'], UEFA_TV],
+  ['eng.1', 'Premier League', 'UK', ['premier league', 'epl', 'barclays'], ['viaplay', 'sky sports', 'tnt sports', 'amazon prime', 'prime video', 'canal+', 'nbc', 'peacock', 'usa network', 'dazn', 'bein', 'supersport', 'optus', 'premier league']],
+  ['esp.1', 'La Liga', 'ES', ['la liga', 'laliga'], ['ziggo sport', 'movistar', 'dazn', 'laliga tv', 'premier sports', 'espn', 'bein']],
+  ['ita.1', 'Serie A', 'IT', ['serie a'], ['ziggo sport', 'dazn', 'sky sport', 'tnt sports', 'cbs sports', 'paramount', 'bein']],
+  ['ger.1', 'Bundesliga', 'DE', ['bundesliga'], ['viaplay', 'sky sport', 'sky sports', 'dazn', 'espn', 'sport1']],
+  ['fra.1', 'Ligue 1', 'FR', ['ligue 1'], ['ligue 1+', 'dazn', 'bein', 'canal+', 'espn']],
+  ['por.1', 'Liga Portugal', 'PT', ['liga portugal', 'primeira liga', 'liga betclic'], ['sport tv', 'btv', 'benfica tv', 'dazn', 'eleven']],
+];
 
 async function loadMatches() {
   const d = new Date(Date.now() + S.sportDay * 864e5);
   const day = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-  const results = await Promise.all(LEAGUES.map(async ([id, name]) => {
+  const results = await Promise.all(LEAGUES.map(async ([id, name, country, words, tv]) => {
     try {
       const j = await (await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${id}/scoreboard?dates=${day}`)).json();
       return (j.events || []).map((e) => {
         const c = e.competitions[0];
         const t = (side) => { const x = c.competitors.find((k) => k.homeAway === side); return { name: x.team.displayName, short: x.team.shortDisplayName, logo: x.team.logo, score: x.score }; };
-        return { league: name, home: t('home'), away: t('away'), start: Date.parse(e.date), state: e.status.type.state, detail: e.status.type.shortDetail };
+        return { league: name, country, words, tv, home: t('home'), away: t('away'), start: Date.parse(e.date), state: e.status.type.state, detail: e.status.type.shortDetail };
       });
     } catch { return []; }
   }));
@@ -486,14 +499,84 @@ function viewSport() {
   return html;
 }
 
+// Zoeken naar zenders, net als in de app: van zeker (beide clubs) naar waarschijnlijk (zender van de competitie).
+const plainText = (s) => String(s || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+const wordRe = (list) => new RegExp('(^|[^a-z0-9])(' + list.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')($|[^a-z0-9])');
+const NOISE = new Set(['fc', 'afc', 'sc', 'cf', 'sv', 'as', 'ss', 'ac', 'fk', 'sk', 'bv', 'vv', 'cd', 'rc', 'rcd', 'ud', 'sd', '1.', 'calcio', 'club', 'de']);
+const AMBIGUOUS = new Set(['manchester', 'real', 'athletic', 'atletico', 'inter', 'sporting', 'borussia', 'olympique', 'racing', 'dynamo', 'union', 'young', 'royal', 'stade', 'west', 'sheffield', 'nottingham', 'queens']);
+function teamNames(t) {
+  const words = plainText(t.name).split(/[\s-]+/).filter((w) => w && !NOISE.has(w));
+  const first = words.length > 1 && words[0].length >= 5 && !AMBIGUOUS.has(words[0]) ? words[0] : null;
+  return [...new Set([plainText(t.name), plainText(t.short), words.join(' '), first].filter((x) => x && x.length >= 2))];
+}
+const COUNTRY = { NL: ['nl', 'nld', 'netherlands', 'nederland', 'holland', 'dutch'], UK: ['uk', 'gb', 'en', 'eng', 'england', 'english'], DE: ['de', 'ger', 'germany', 'deutschland'],
+  ES: ['es', 'esp', 'spain', 'espana'], IT: ['it', 'ita', 'italy', 'italia'], FR: ['fr', 'fra', 'france'], PT: ['pt', 'por', 'portugal'], BE: ['be', 'bel', 'belgium'], US: ['us', 'usa'],
+  AR: ['ar', 'arg', 'argentina'], TR: ['tr', 'tur', 'turkey', 'turkiye'], AU: ['au', 'aus', 'australia'], MX: ['mx', 'mex', 'mexico'], BR: ['br', 'bra', 'brasil', 'brazil'],
+  CA: ['ca', 'can', 'canada'], LATAM: ['latam', 'latino'], AR2: ['ara', 'arab', 'arabic', 'mena'] };
+function countryOfChannel(c) {
+  const group = S.cat.liveCats.find((g) => g.id === c.cat)?.name || '';
+  for (const text of [c.name, group]) {
+    const code = plainText(text).match(/^\W*([a-z]{2,3})\s*[|:\]\-/]/)?.[1];
+    const hit = code && Object.entries(COUNTRY).find(([, w]) => w.includes(code));
+    if (hit) return hit[0];
+  }
+  return null;
+}
+
+function matchHits(m) {
+  const home = wordRe(teamNames(m.home)), away = wordRe(teamNames(m.away)), tv = wordRe(m.tv || []);
+  const own = m.country || 'NL';
+  const hits = new Map();
+  for (const c of S.cat.live) {
+    const n = plainText(c.name);
+    if (home.test(n) && away.test(n)) hits.set(c.id, { c, score: 90, reason: 'Kanaal speciaal voor deze wedstrijd', land: countryOfChannel(c) });
+    else if (tv.test(n)) {
+      const land = countryOfChannel(c);
+      if (!land || [own, 'NL', 'UK'].includes(land)) hits.set(c.id, { c, score: 30, reason: `Zendt de ${m.league} meestal uit`, land });
+    }
+  }
+  return { hits, home, away };
+}
+const sortHits = (list, own) => {
+  const level = (s) => (s >= 75 ? 0 : s >= 45 ? 1 : 2);
+  const tier = (l) => (l === own ? 0 : l === 'NL' || l === 'UK' ? 1 : 2);
+  return list.sort((a, b) => level(a.score) - level(b.score) || tier(a.land) - tier(b.land) || b.score - a.score || a.c.name.localeCompare(b.c.name)).slice(0, 60);
+};
+
 function openMatch(m) {
-  const plain = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-  const names = (t) => [t.name, t.short].map(plain);
-  const hits = S.cat.live.filter((c) => { const n = plain(c.name); return names(m.home).some((x) => n.includes(x)) && names(m.away).some((x) => n.includes(x)); });
+  const { hits, home, away } = matchHits(m);
+  const own = m.country || 'NL';
+  const leagueRe = wordRe(m.words || []);
+  const draw = () => {
+    const list = sortHits([...hits.values()], own);
+    const box = $('#matchhits');
+    if (!box) return;
+    box.innerHTML = list.length
+      ? `<h2>Hier is hij (waarschijnlijk) te zien</h2><div class="list">${list.map((h) => channelLine(h.c, 'search').replace('<span class="now">&nbsp;</span>', `<span class="now" style="color:var(--accent)">${esc(h.reason)}</span>`)).join('')}</div>`
+      : '<p class="section dim">Geen zender gevonden die deze wedstrijd uitzendt.</p>';
+  };
   sheet(`<div class="section"><div class="dim">${esc(m.league)}</div><h1 style="margin:6px 0">${esc(m.home.name)} – ${esc(m.away.name)}</h1>
-    <p class="dim">${m.state === 'pre' ? 'Aftrap ' + clock(m.start) : esc(m.detail)}</p></div>
-    ${hits.length ? `<h2>Kanalen met deze wedstrijd</h2><div class="list">${hits.map((c) => channelLine(c, 'search')).join('')}</div>`
-      : `<p class="section dim">Geen kanaal gevonden met beide clubs in de naam. In de tv- en telefoon-app zoekt IPTIMTV ook in de programmagids.</p>`}`);
+    <p class="dim">${m.state === 'pre' ? 'Aftrap ' + clock(m.start) : esc(m.detail)}</p></div><div id="matchhits"></div>`);
+  draw();
+  // In de korte gids van de waarschijnlijke zenders kijken of de wedstrijd er echt op staat.
+  const p = active();
+  if (!p || p.type !== 'XTREAM' || (isDirect(p) && !onHttp)) return;
+  const dec = (s) => { try { return decodeURIComponent(escape(atob(s))); } catch { return s; } };
+  const kick = m.start / 1000;
+  const check = sortHits([...hits.values()].filter((h) => h.score < 90), own).slice(0, 25);
+  for (const h of check) {
+    epgQueue(() => pfetch(`${xbase(p)}&action=get_short_epg&stream_id=${h.c.id}&limit=12`)).then((r) => r.json()).then((d) => {
+      for (const e of d.epg_listings || []) {
+        const start = +e.start_timestamp, stop = +e.stop_timestamp;
+        if (!((start >= kick - 3600 && start <= kick + 1200) || (start <= kick && stop >= kick + 1800))) continue;
+        const t = plainText(dec(e.title) + ' ' + dec(e.description || ''));
+        const what = `${dec(e.title)} (${clock(start * 1000)})`;
+        const hh = home.test(t), aa = away.test(t);
+        const score = hh && aa ? 100 : hh || aa ? 75 : leagueRe.test(t) ? 55 : 0;
+        if (score > h.score) { h.score = score; h.reason = (score === 55 ? `${m.league} in de gids: ` : 'In de gids: ') + what; draw(); }
+      }
+    }).catch(() => {});
+  }
 }
 
 // ---------- instellingen ----------
