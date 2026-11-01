@@ -1,6 +1,21 @@
 package nl.timvanbergen.iptimtv.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
+import nl.timvanbergen.iptimtv.data.History
+import nl.timvanbergen.iptimtv.data.Program
+import nl.timvanbergen.iptimtv.data.RecState
+import nl.timvanbergen.iptimtv.data.Recording
+import nl.timvanbergen.iptimtv.data.Recordings
+import nl.timvanbergen.iptimtv.data.Settings
+import nl.timvanbergen.iptimtv.data.SourceType
+import nl.timvanbergen.iptimtv.data.WatchItem
+import nl.timvanbergen.iptimtv.data.Xtream
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,13 +78,15 @@ import nl.timvanbergen.iptimtv.data.Library
 /** Een kader midden in beeld. */
 @Composable
 fun DialogFrame(title: String, width: Int = 620, content: @Composable ColumnScope.() -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxSize().padding(if (Mobile) 12.dp else 0.dp), contentAlignment = Alignment.Center) {
         Column(
             Modifier
-                .width(width.dp)
+                .widthIn(max = width.dp)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .background(C.panel, RoundedCornerShape(22.dp))
                 .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
-                .padding(36.dp),
+                .padding(if (Mobile) 22.dp else 36.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             T(title, size = 26.sp, weight = FontWeight.Bold, maxLines = 2)
@@ -267,21 +284,31 @@ fun ChannelPicker(o: Overlay.Picker) {
     }
     val allOn = channels.isNotEmpty() && channels.all { it.id in selectedSet }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 32.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = Pad, vertical = if (Mobile) 8.dp else 32.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                T("Kanalen kiezen voor ${o.title}", size = 28.sp, weight = FontWeight.Bold)
+                T("Kanalen kiezen voor ${o.title}", size = if (Mobile) 20.sp else 28.sp, weight = FontWeight.Bold, maxLines = 2)
                 T("${selected.size} geselecteerd · OK zet een kanaal aan of uit", color = C.dim)
             }
             Button("Opslaan", primary = true, icon = Icons.Filled.Check, onClick = {
                 Nav.close(); o.onDone(selected.toList())
             })
-            Spacer(Modifier.width(12.dp))
-            Button("Annuleren", onClick = { Nav.close() })
+            if (!Mobile) {
+                Spacer(Modifier.width(12.dp))
+                Button("Annuleren", onClick = { Nav.close() })
+            }
         }
         Spacer(Modifier.height(20.dp))
+        if (Mobile) {
+            TvTextField(query, { query = it }, "Zoek een kanaal…", imeAction = ImeAction.Search)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 10.dp)) {
+                items(categories, key = { it.id }) { c ->
+                    Button(c.name, selected = query.isBlank() && c.id == category, onClick = { query = ""; category = c.id })
+                }
+            }
+        }
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            LazyColumn(
+            if (!Mobile) LazyColumn(
                 Modifier.width(320.dp).fillMaxHeight().focusRestorer(),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 contentPadding = PaddingValues(vertical = 6.dp, horizontal = 6.dp),
@@ -321,8 +348,8 @@ fun ChannelPicker(o: Overlay.Picker) {
                     ) {
                         Row(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(on)
-                            Spacer(Modifier.width(16.dp))
-                            Logo(ch.logo, ch.name, Modifier.size(72.dp, 44.dp))
+                            Spacer(Modifier.width(if (Mobile) 10.dp else 16.dp))
+                            Logo(ch.logo, ch.name, Modifier.size(if (Mobile) 56.dp else 72.dp, if (Mobile) 34.dp else 44.dp))
                             Spacer(Modifier.width(16.dp))
                             T(ch.name, size = 18.sp, modifier = Modifier.weight(1f))
                         }
@@ -368,5 +395,71 @@ fun CategoryItem(
             T(name, color = if (focused) Color.Black else if (selected) C.text else C.dim, size = 17.sp, weight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
             if (badge != null) T(badge, color = if (focused) Color.Black else C.accent, weight = FontWeight.Bold)
         }
+    }
+}
+
+/** Een programma uit de gids: terugkijken (als dat kan), kijken of opnemen. */
+@Composable
+fun ProgramMenu(ch: Channel, p: Program) {
+    val focus = rememberInitialFocus()
+    val now = System.currentTimeMillis()
+    val profile = Library.active
+    val canCatchup = ch.archiveDays > 0 && profile?.type == SourceType.XTREAM && p.start < now &&
+        p.start > now - ch.archiveDays * 86_400_000L
+    val existing = Recordings.items.firstOrNull { it.url == ch.url && it.start <= p.start && it.end >= p.stop &&
+        (it.state == RecState.SCHEDULED || it.state == RecState.RECORDING) }
+    DialogFrame(p.title) {
+        T("${ch.name} · ${whenText(p.start, p.stop)} · ${clock(p.start)} – ${clock(p.stop)}", color = C.dim, maxLines = 2)
+        p.description?.let { T(it, color = C.text.copy(alpha = 0.85f), maxLines = 6) }
+        var first = true
+        fun mod(): Modifier = if (first) { first = false; Modifier.focusRequester(focus) } else Modifier
+        if (canCatchup) MenuItem("Terugkijken", Ic.Restart, mod()) {
+            Nav.close()
+            Nav.play = Playback(listOf(PlayItem(p.title, Xtream.catchupUrl(profile!!, ch, p.start, p.stop), ch.logo, subtitle = ch.name,
+                key = "live:${ch.id}", kind = "live", image = ch.logo)), 0, live = false)
+        }
+        if (p.isLive()) MenuItem("Nu kijken", Icons.Filled.PlayArrow, mod()) { Nav.close(); Nav.playChannels(listOf(ch), ch) }
+        if (p.stop > now) {
+            if (existing != null) MenuItem(if (existing.state == RecState.RECORDING) "Opname stoppen" else "Opname annuleren", Icons.Filled.Delete, mod()) {
+                Recordings.stop(existing); Nav.close()
+            } else MenuItem(if (p.isLive()) "Opnemen (tot het einde)" else "Opnemen", Ic.Record, mod()) {
+                val start = if (p.isLive()) now else p.start - Settings.recordPre.int * 60_000L
+                Recordings.schedule(p.title, ch, start, p.stop + Settings.recordPost.int * 60_000L)
+                Nav.close()
+            }
+        }
+        MenuItem("Sluiten", Icons.Filled.Close, mod()) { Nav.close() }
+    }
+}
+
+@Composable
+fun RecordingMenu(r: Recording) {
+    val focus = rememberInitialFocus()
+    DialogFrame(r.title) {
+        T("${r.channel} · ${whenText(r.start, r.end)} · ${clock(r.start)} – ${clock(r.end)}", color = C.dim, maxLines = 2)
+        T(when (r.state) {
+            RecState.SCHEDULED -> "Gepland"
+            RecState.RECORDING -> "Wordt nu opgenomen (${r.bytes / 1_000_000} MB)"
+            RecState.DONE -> "Klaar · ${r.bytes / 1_000_000} MB · Download/IPTIMTV"
+            RecState.FAILED -> "Mislukt"
+            RecState.CANCELLED -> "Geannuleerd"
+        }, color = C.accent)
+        if (r.uri != null && (r.state == RecState.DONE || r.state == RecState.RECORDING)) MenuItem("Afspelen", Icons.Filled.PlayArrow, Modifier.focusRequester(focus)) {
+            Nav.close()
+            Nav.play = Playback(listOf(PlayItem(r.title, r.uri, r.logo, subtitle = r.channel, key = "rec:${r.id}", kind = "recording", image = r.logo)), 0, live = false)
+        }
+        if (r.state == RecState.RECORDING || r.state == RecState.SCHEDULED) MenuItem("Stoppen", Icons.Filled.Close) { Recordings.stop(r); Nav.close() }
+        MenuItem("Verwijderen", Icons.Filled.Delete) { Recordings.delete(r); Nav.close() }
+    }
+}
+
+@Composable
+fun WatchMenu(w: WatchItem) {
+    val focus = rememberInitialFocus()
+    DialogFrame(w.title) {
+        w.subtitle?.let { T(it, color = C.dim) }
+        MenuItem("Verder kijken (${duration(w.position)})", Icons.Filled.PlayArrow, Modifier.focusRequester(focus)) { Nav.close(); Nav.playWatch(w) }
+        MenuItem("Vanaf het begin", Ic.Restart) { Nav.close(); Nav.playWatch(w, fromStart = true) }
+        MenuItem("Weghalen uit Verder kijken", Icons.Filled.Delete) { History.remove(w.key); Nav.close() }
     }
 }

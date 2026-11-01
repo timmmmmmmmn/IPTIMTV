@@ -61,6 +61,34 @@ class Epg(context: Context, profileId: String) :
         return out
     }
 
+    /** Programma's van een kanaal vanaf [from] (voor de gids, ook terug in de tijd). */
+    fun schedule(epgId: String?, from: Long, limit: Int = 200): List<Program> {
+        if (epgId.isNullOrBlank()) return emptyList()
+        val out = ArrayList<Program>()
+        readableDatabase.rawQuery(
+            "SELECT start, stop, title, descr FROM prog WHERE ch = ? AND stop > ? ORDER BY start LIMIT ?",
+            arrayOf(epgId.lowercase(), from.toString(), limit.toString()),
+        ).use { c ->
+            while (c.moveToNext()) out += Program(epgId.lowercase(), c.getLong(0), c.getLong(1), c.getString(2), c.getString(3))
+        }
+        return out
+    }
+
+    /** Programma's met een van de woorden in de titel, binnen een tijdvak (voor het sportmenu). */
+    fun findInWindow(words: List<String>, from: Long, until: Long, limit: Int = 200): List<Program> {
+        if (words.isEmpty()) return emptyList()
+        val where = words.joinToString(" OR ") { "title LIKE ?" }
+        val args = arrayOf(until.toString(), from.toString()) + words.map { "%" + it.replace("%", "") + "%" } + limit.toString()
+        val out = ArrayList<Program>()
+        readableDatabase.rawQuery(
+            "SELECT ch, start, stop, title, descr FROM prog WHERE start < ? AND stop > ? AND ($where) ORDER BY start LIMIT ?",
+            args,
+        ).use { c ->
+            while (c.moveToNext()) out += Program(c.getString(0), c.getLong(1), c.getLong(2), c.getString(3), c.getString(4))
+        }
+        return out
+    }
+
     fun isEmpty(): Boolean = readableDatabase.rawQuery("SELECT 1 FROM prog LIMIT 1", null).use { !it.moveToFirst() }
 
     /**
@@ -69,8 +97,9 @@ class Epg(context: Context, profileId: String) :
      */
     fun import(input: InputStream, wanted: Set<String>) {
         val now = System.currentTimeMillis()
-        val from = now - 2 * 3600_000
-        val until = now + 48 * 3600_000
+        val from = now - maxOf(2 * 3600_000L, Settings.epgBack.int * 86_400_000L)
+        val until = now + Settings.epgAhead.int * 86_400_000L
+        val shift = Settings.epgShift.int * 3600_000L
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -91,8 +120,8 @@ class Epg(context: Context, profileId: String) :
                     XmlPullParser.START_TAG -> when (parser.name) {
                         "programme" -> {
                             ch = parser.getAttributeValue(null, "channel")?.lowercase()
-                            start = parseTime(parser.getAttributeValue(null, "start"))
-                            stop = parseTime(parser.getAttributeValue(null, "stop"))
+                            start = parseTime(parser.getAttributeValue(null, "start")) + shift
+                            stop = parseTime(parser.getAttributeValue(null, "stop")) + shift
                             keep = ch != null && ch in wanted && stop > from && start < until
                             title = null; desc = null
                         }

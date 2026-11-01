@@ -45,7 +45,6 @@ object Library {
     private val liveOrder = mutableStateListOf<String>()
     val hiddenCategories = mutableStateListOf<String>()
 
-    private const val STALE_MS = 12 * 3600_000L
 
     fun init(context: Context) {
         if (::app.isInitialized) return
@@ -95,6 +94,7 @@ object Library {
         active = p
         prefs.edit().putString("active", p.id).apply()
         loadUserData(p)
+        History.load(p)
         epg?.close()
         epg = Epg(app, p.id)
         catalog = Catalog()
@@ -108,11 +108,17 @@ object Library {
                 catalog = withContext(Dispatchers.IO) { runCatching { parse(p) }.getOrDefault(Catalog()) }
                 loading = null
             }
-            val stale = System.currentTimeMillis() - prefs.getLong("updated_${p.id}", 0) > STALE_MS
+            val stale = System.currentTimeMillis() - prefs.getLong("updated_${p.id}", 0) > Settings.catalogRefresh.int * 3600_000L
             if (forceRefresh || catalog.isEmpty || stale) refreshNow(p, showProgress = catalog.isEmpty)
-            val epgStale = System.currentTimeMillis() - prefs.getLong("epg_${p.id}", 0) > STALE_MS
+            val epgStale = System.currentTimeMillis() - prefs.getLong("epg_${p.id}", 0) > Settings.epgRefresh.int * 3600_000L
             if (forceRefresh || epgStale || withContext(Dispatchers.IO) { epg?.isEmpty() == true }) refreshEpg(p)
         }
+    }
+
+    /** Alleen de gids opnieuw ophalen (vanuit Geavanceerd). */
+    fun refreshGuide() {
+        val p = active ?: return
+        scope.launch { refreshEpg(p) }
     }
 
     /** Handmatig alles opnieuw ophalen (vanuit Instellingen). */
@@ -259,17 +265,6 @@ object Library {
     }
 
     fun channels(ids: List<String>): List<Channel> = ids.mapNotNull { catalog.channelById[it] }
-
-    // ---------- verder kijken ----------
-
-    fun resumePosition(url: String): Long = prefs.getLong("pos_" + url.hashCode(), 0)
-
-    fun saveResume(url: String, position: Long, duration: Long) {
-        val key = "pos_" + url.hashCode()
-        val done = duration > 0 && position > duration - 3 * 60_000
-        if (position < 60_000 || done) prefs.edit().remove(key).apply()
-        else prefs.edit().putLong(key, position).apply()
-    }
 
     fun lastChannel(): String? = active?.let { prefs.getString("last_${it.id}", null) }
     fun setLastChannel(id: String) {

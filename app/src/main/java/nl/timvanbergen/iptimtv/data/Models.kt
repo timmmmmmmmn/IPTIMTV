@@ -47,6 +47,8 @@ data class Channel(
     val categoryId: String,
     val url: String,
     val epgId: String?,
+    /** Hoeveel dagen terugkijken de provider aanbiedt (0 = niet). */
+    val archiveDays: Int = 0,
 )
 
 data class Movie(

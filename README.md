@@ -1,16 +1,23 @@
 # IPTIMTV
 
-Eenvoudige IPTV-app voor Android TV / Google TV, gemaakt om ook voor niet-techneuten overzichtelijk te zijn.
+Eenvoudige IPTV-app voor Android TV / Google TV én Android-telefoons. Simpel voor iedereen, met een uitgebreid menu **Geavanceerd** voor wie alles wil tweaken.
 
-- **Start**: je eigen kanalen en zelfgemaakte groepen (bijv. "Ziggo Sport"), kanalen in bulk te kiezen
-- **Live TV**: de groepen van de provider, in je eigen volgorde, en te verbergen
-- **Films** en **Series**, met verder kijken
-- **Zoeken** op kanalen, films, series en programma's in de gids
-- Meerdere logins (Xtream Codes of M3U)
+- **Start**: je eigen kanalen en groepen, *Verder kijken* en je opnames
+- **Live TV**: providergroepen in je eigen volgorde, terugkijken waar de provider dat aanbiedt
+- **Sport**: wedstrijden van vandaag (Eredivisie, Premier League, CL, ...) en op welke zenders ze te zien zijn
+- **Films** en **Series**, **Zoeken** (ook in de gids)
+- **Opnemen** naar `Download/IPTIMTV`, ook gepland vanuit de gids
+- **Account** op iptv.timvanbergen.nl: kijkgeschiedenis en kijktijd op al je apparaten
+- **Automatische updates** vanuit de GitHub-releases
 
 ## Installeren
 
-Download `IPTIMTV.apk` bij de [nieuwste release](../../releases/latest) en installeer hem op de tv
-(bijv. met de app *Downloader* of `adb install IPTIMTV.apk`).
+Bij de [nieuwste release](../../releases/latest):
+- `IPTIMTV.apk` voor de tv (bijv. met de app *Downloader*)
+- `IPTIMTV-mobile.apk` voor je telefoon
 
-Elke push naar `main` bouwt automatisch een nieuwe, ondertekende APK.
+Elke push naar `main` bouwt automatisch nieuwe, ondertekende APK's; de app meldt de update zelf.
+
+## Server
+
+`server/` is de Cloudflare Worker (+ D1) achter iptv.timvanbergen.nl. Uitrollen met `npx wrangler deploy` in die map.

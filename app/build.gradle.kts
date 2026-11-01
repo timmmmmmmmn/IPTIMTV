@@ -29,6 +29,22 @@ android {
         versionName = "1.0.$buildNumber"
     }
 
+    // Twee apps uit dezelfde code: één voor de tv (afstandsbediening) en één voor de telefoon (touch).
+    flavorDimensions += "device"
+    productFlavors {
+        create("tv") {
+            dimension = "device"
+            buildConfigField("boolean", "MOBILE", "false")
+            buildConfigField("String", "APK_NAME", "\"IPTIMTV.apk\"")
+        }
+        create("mobile") {
+            dimension = "device"
+            applicationIdSuffix = ".mobile"
+            buildConfigField("boolean", "MOBILE", "true")
+            buildConfigField("String", "APK_NAME", "\"IPTIMTV-mobile.apk\"")
+        }
+    }
+
     signingConfigs {
         create("release") {
             signing("IPTIMTV_KEYSTORE")?.let { storeFile = file(it) }
@@ -49,6 +65,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

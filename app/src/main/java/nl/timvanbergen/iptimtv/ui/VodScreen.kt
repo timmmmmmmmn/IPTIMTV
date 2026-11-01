@@ -1,6 +1,9 @@
 package nl.timvanbergen.iptimtv.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.widthIn
+import nl.timvanbergen.iptimtv.data.History
+import nl.timvanbergen.iptimtv.data.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -95,6 +98,22 @@ private fun CategoryGrid(
     onSelect: (String) -> Unit,
     grid: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit,
 ) {
+    if (Mobile) {
+        Column(Modifier.fillMaxSize()) {
+            LazyRow(contentPadding = PaddingValues(horizontal = Pad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(cats, key = { it.id }) { c -> Button(c.name, selected = c.id == current.id, onClick = { onSelect(c.id) }) }
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(108.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = Pad, end = Pad, top = 8.dp, bottom = 110.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                content = grid,
+            )
+        }
+        return
+    }
     Row(Modifier.fillMaxSize().padding(start = 42.dp, end = 36.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
         LazyColumn(
             Modifier.width(330.dp).fillMaxHeight().focusRestorer(),
@@ -121,7 +140,7 @@ fun PosterTile(name: String, poster: String?, rating: String?, modifier: Modifie
     Column(if (width != null) modifier.width(width.dp) else modifier) {
         Focusable(onClick = onClick, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f), scale = 1.07f) {
             Poster(poster, name, Modifier.fillMaxSize())
-            if (rating != null) Row(
+            if (rating != null && Settings.showRatings.on) Row(
                 Modifier.align(Alignment.TopEnd).padding(8.dp)
                     .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 7.dp, vertical = 3.dp),
@@ -133,7 +152,7 @@ fun PosterTile(name: String, poster: String?, rating: String?, modifier: Modifie
             }
         }
         Spacer(Modifier.height(8.dp))
-        T(name, size = 15.sp, color = C.text.copy(alpha = 0.9f), maxLines = 2)
+        T(name, size = if (Mobile) 13.sp else 15.sp, color = C.text.copy(alpha = 0.9f), maxLines = 2)
     }
 }
 
@@ -147,7 +166,13 @@ private fun InfoLayout(poster: String?, title: String, content: @Composable () -
                 Brush.horizontalGradient(listOf(C.bg, C.bg.copy(alpha = 0.96f), C.bg.copy(alpha = 0.75f))),
             ),
         )
-        Row(Modifier.fillMaxSize().padding(56.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
+        if (Mobile) {
+            Column(Modifier.fillMaxSize().padding(16.dp)) {
+                Poster(poster, title, Modifier.width(120.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp)))
+                Spacer(Modifier.height(14.dp))
+                content()
+            }
+        } else Row(Modifier.fillMaxSize().padding(56.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
             Poster(poster, title, Modifier.width(300.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(18.dp)))
             Column(Modifier.weight(1f)) { content() }
         }
@@ -157,14 +182,15 @@ private fun InfoLayout(poster: String?, title: String, content: @Composable () -
 @Composable
 fun MovieInfo(m: Movie) {
     val focus = rememberInitialFocus()
-    val resume = remember { Library.resumePosition(m.url) }
+    val key = watchKey("movie", m.url)
+    val resume = remember { History.get(key)?.takeIf { it.unfinished }?.position ?: 0L }.let { if (Settings.resumeMode.value == "start") 0L else it }
     val plot by produceState<String?>(null, m.id) {
         val p = Library.active
         if (p?.type == SourceType.XTREAM) value = withContext(Dispatchers.IO) { Xtream.moviePlot(p, m.id) }
     }
-    val item = PlayItem(m.name, m.url, m.poster)
+    val item = PlayItem(m.name, m.url, m.poster, key = key, kind = "movie", image = m.poster)
     InfoLayout(m.poster, m.name) {
-        T(m.name, size = 40.sp, weight = FontWeight.Black, maxLines = 2)
+        T(m.name, size = if (Mobile) 26.sp else 40.sp, weight = FontWeight.Black, maxLines = 2)
         Spacer(Modifier.height(12.dp))
         if (m.rating != null) Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Star, Color(0xFFFFC94D), 20.dp)
@@ -172,10 +198,14 @@ fun MovieInfo(m: Movie) {
             T(m.rating, size = 18.sp, weight = FontWeight.Bold)
         }
         Spacer(Modifier.height(20.dp))
-        T(plot ?: "", size = 18.sp, color = C.text.copy(alpha = 0.85f), maxLines = 7, modifier = Modifier.width(760.dp))
+        T(plot ?: "", size = if (Mobile) 15.sp else 18.sp, color = C.text.copy(alpha = 0.85f), maxLines = 7, modifier = Modifier.widthIn(max = 760.dp))
         Spacer(Modifier.height(32.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            if (resume > 0) {
+        Wrap {
+            if (resume > 0 && Settings.resumeMode.value == "auto") {
+                Button("Verder kijken (${duration(resume)})", icon = Icons.Filled.PlayArrow, primary = true, modifier = Modifier.focusRequester(focus), onClick = {
+                    Nav.play = Playback(listOf(item), 0, live = false, startAt = resume)
+                })
+            } else if (resume > 0) {
                 Button("Verder kijken (${duration(resume)})", icon = Icons.Filled.PlayArrow, primary = true, modifier = Modifier.focusRequester(focus), onClick = {
                     Nav.play = Playback(listOf(item), 0, live = false, startAt = resume)
                 })
@@ -211,10 +241,10 @@ fun ShowInfo(s: Show) {
     val shown = episodes.orEmpty().filter { it.season == currentSeason }
 
     InfoLayout(s.poster, s.name) {
-        T(s.name, size = 36.sp, weight = FontWeight.Black, maxLines = 2)
+        T(s.name, size = if (Mobile) 24.sp else 36.sp, weight = FontWeight.Black, maxLines = 2)
         if (s.plot != null) {
             Spacer(Modifier.height(10.dp))
-            T(s.plot, size = 16.sp, color = C.text.copy(alpha = 0.8f), maxLines = 3, modifier = Modifier.width(820.dp))
+            T(s.plot, size = 16.sp, color = C.text.copy(alpha = 0.8f), maxLines = 3, modifier = Modifier.widthIn(max = 820.dp))
         }
         Spacer(Modifier.height(20.dp))
         when {
@@ -235,8 +265,13 @@ fun ShowInfo(s: Show) {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(4.dp, 4.dp, 4.dp, 40.dp)) {
                     items(shown, key = { it.id }) { e ->
                         EpisodeLine(e) {
-                            val items = shown.map { PlayItem(it.title.ifBlank { "Aflevering ${it.number}" }, it.url, s.poster, subtitle = s.name) }
-                            Nav.play = Playback(items, shown.indexOf(e), live = false, startAt = Library.resumePosition(e.url))
+                            val items = shown.map {
+                                PlayItem(it.title.ifBlank { "Aflevering ${it.number}" }, it.url, s.poster,
+                                    subtitle = s.name + if (it.season > 0) " · S${it.season} A${it.number}" else "",
+                                    key = watchKey("episode", it.url), kind = "episode", parent = s.id, image = it.image ?: s.poster)
+                            }
+                            val pos = History.get(watchKey("episode", e.url))?.takeIf { it.unfinished }?.position ?: 0L
+                            Nav.play = Playback(items, shown.indexOf(e), live = false, startAt = if (Settings.resumeMode.value == "start") 0 else pos)
                         }
                     }
                 }
@@ -247,10 +282,10 @@ fun ShowInfo(s: Show) {
 
 @Composable
 private fun EpisodeLine(e: Episode, onClick: () -> Unit) {
-    val resume = remember(e.url, Nav.play) { Library.resumePosition(e.url) }
+    val resume = remember(e.url, Nav.play) { History.get(watchKey("episode", e.url))?.takeIf { it.unfinished }?.position ?: 0L }
     Focusable(onClick = onClick, modifier = Modifier.fillMaxWidth().height(86.dp), scale = 1.02f) {
         Row(Modifier.fillMaxSize().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Poster(e.image, "${e.number}", Modifier.size(118.dp, 66.dp).clip(RoundedCornerShape(8.dp)))
+            Poster(e.image, "${e.number}", Modifier.size(if (Mobile) 96.dp else 118.dp, if (Mobile) 54.dp else 66.dp).clip(RoundedCornerShape(8.dp)))
             Spacer(Modifier.width(18.dp))
             Column(Modifier.weight(1f)) {
                 T("${e.number}. ${e.title.ifBlank { "Aflevering ${e.number}" }}", size = 18.sp, weight = FontWeight.Bold)

@@ -17,15 +17,30 @@ import java.util.zip.GZIPInputStream
 const val USER_AGENT = "IPTIMTV/1.0"
 
 object Net {
-    val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .addInterceptor { chain ->
-            chain.proceed(chain.request().newBuilder().header("User-Agent", USER_AGENT).build())
+    private var cached: Pair<String, OkHttpClient>? = null
+
+    /** De verbinding volgt de instellingen (identiteit en wachttijd) uit Geavanceerd. */
+    val client: OkHttpClient
+        get() {
+            val ua = Settings.userAgent.value
+            val timeout = Settings.timeout.int.toLong()
+            val key = "$ua|$timeout"
+            cached?.let { if (it.first == key) return it.second }
+            val c = OkHttpClient.Builder()
+                .connectTimeout(timeout, TimeUnit.SECONDS)
+                .readTimeout(timeout * 6, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .addInterceptor { chain ->
+                    val r = chain.request()
+                    // Eigen server en GitHub altijd als IPTIMTV; de provider krijgt de gekozen identiteit.
+                    val agent = if (r.url.host.endsWith("timvanbergen.nl") || r.url.host.endsWith("github.com")) USER_AGENT else ua
+                    chain.proceed(r.newBuilder().header("User-Agent", agent).build())
+                }
+                .build()
+            cached = key to c
+            return c
         }
-        .build()
 
     fun get(url: String): String = open(url).use { it.readBytes().toString(Charsets.UTF_8) }
 
@@ -139,6 +154,7 @@ object Xtream {
                 categoryId = m["category_id"].orEmpty(),
                 url = "${p.server}/live/${p.username}/${p.password}/$id.${p.liveFormat}",
                 epgId = m["epg_channel_id"]?.takeIf { it.isNotBlank() },
+                archiveDays = if (m["tv_archive"] == "1") m["tv_archive_duration"]?.toIntOrNull() ?: 1 else 0,
             )
         }
         val movieCats = cats("get_vod_categories")
@@ -204,6 +220,17 @@ object Xtream {
             }
         }
         return out.sortedWith(compareBy({ it.season }, { it.number }))
+    }
+
+    /**
+     * Terugkijken: Xtream biedt dit via /timeshift/ voor kanalen met tv_archive.
+     * De starttijd gaat in de tijdzone van het apparaat, eventueel gecorrigeerd in Geavanceerd.
+     */
+    fun catchupUrl(p: Profile, channel: Channel, start: Long, stop: Long): String {
+        val minutes = ((stop - start) / 60_000).coerceAtLeast(1)
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd:HH-mm", java.util.Locale.US)
+        val at = fmt.format(java.util.Date(start + Settings.catchupShift.int * 3600_000L))
+        return "${p.server}/timeshift/${p.username}/${p.password}/$minutes/$at/${channel.id}.ts"
     }
 
     fun moviePlot(p: Profile, movieId: String): String? = runCatching {

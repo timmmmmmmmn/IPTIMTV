@@ -5,16 +5,25 @@ import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import nl.timvanbergen.iptimtv.data.Cloud
+import nl.timvanbergen.iptimtv.data.History
 import nl.timvanbergen.iptimtv.data.Library
+import nl.timvanbergen.iptimtv.data.Recordings
+import nl.timvanbergen.iptimtv.data.Settings
 import nl.timvanbergen.iptimtv.ui.IptimApp
 import nl.timvanbergen.iptimtv.ui.Nav
 
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        Settings.init(this)
+        History.init(this)
+        Cloud.init(this)
+        Recordings.init(this)
         Library.init(this)
     }
 }
@@ -22,9 +31,13 @@ class App : Application() {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.getInsetsController(window, window.decorView).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (BuildConfig.MOBILE) {
+            enableEdgeToEdge()
+        } else {
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+                hide(WindowInsetsCompat.Type.systemBars())
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
         }
         setContent { IptimApp(onExit = { finish() }) }
     }

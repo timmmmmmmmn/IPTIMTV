@@ -1,6 +1,7 @@
 name: APK bouwen
 
-# Bij elke push naar main: een ondertekende APK bouwen en als release publiceren.
+# Bij elke push naar main: ondertekende APK's (tv + telefoon) bouwen en als release publiceren.
+# De app kijkt zelf naar de nieuwste release en biedt de update aan.
 on:
   push:
     branches: [main]
@@ -33,8 +34,8 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.IPTIMTV_KEYSTORE_BASE64 }}
 
-      - name: APK bouwen
-        run: ./gradlew assembleRelease --no-configuration-cache --console=plain
+      - name: APK's bouwen
+        run: ./gradlew assembleTvRelease assembleMobileRelease --no-configuration-cache --console=plain
         env:
           IPTIMTV_KEYSTORE: ${{ runner.temp }}/iptimtv-release.jks
           IPTIMTV_KEYSTORE_PASSWORD: ${{ secrets.IPTIMTV_KEYSTORE_PASSWORD }}
@@ -46,9 +47,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          cp app/build/outputs/apk/release/app-release.apk IPTIMTV.apk
+          cp app/build/outputs/apk/tv/release/app-tv-release.apk IPTIMTV.apk
+          cp app/build/outputs/apk/mobile/release/app-mobile-release.apk IPTIMTV-mobile.apk
           printf '%s\n' "${COMMIT_MSG:-Handmatig gebouwd}" > notes.md
-          gh release create "v1.0.${{ github.run_number }}" IPTIMTV.apk \
+          gh release create "v1.0.${{ github.run_number }}" IPTIMTV.apk IPTIMTV-mobile.apk \
             --title "IPTIMTV 1.0.${{ github.run_number }}" \
             --notes-file notes.md \
             --latest

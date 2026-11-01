@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import nl.timvanbergen.iptimtv.data.Settings
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,6 +63,22 @@ fun LiveScreen() {
     val current = categories.firstOrNull { it.id == LiveState.category } ?: categories.first()
     val channels = Library.catalog.channelsByCategory[current.id].orEmpty()
 
+    if (Mobile) {
+        Column(Modifier.fillMaxSize()) {
+            LazyRow(contentPadding = PaddingValues(horizontal = Pad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(categories, key = { it.id }) { c -> Button(c.name, selected = c.id == current.id, onClick = { LiveState.category = c.id }) }
+                item { Button("Volgorde", icon = Icons.Filled.Menu, onClick = { Nav.open(Overlay.CategoryOrder) }) }
+            }
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(start = Pad, end = Pad, top = 6.dp, bottom = 110.dp),
+            ) {
+                itemsIndexed(channels, key = { _, c -> c.id }) { i, ch -> ChannelLine(i + 1, ch) { Nav.playChannels(channels, ch) } }
+            }
+        }
+        return
+    }
     Row(Modifier.fillMaxSize().padding(start = 42.dp, end = 48.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
         LazyColumn(
             Modifier.width(330.dp).fillMaxHeight().focusRestorer(),
@@ -93,28 +112,29 @@ fun LiveScreen() {
 
 @Composable
 fun ChannelLine(number: Int?, ch: Channel, onClick: () -> Unit) {
-    val programs = rememberPrograms(ch.epgId, 2)
+    val programs = if (Settings.showEpgInLists.on) rememberPrograms(ch.epgId, 2) else emptyList()
     val now = programs.firstOrNull()?.takeIf { it.isLive() }
     val next = programs.getOrNull(if (now != null) 1 else 0)
     Focusable(
         onClick = onClick,
         onLongClick = { Nav.open(Overlay.ChannelMenu(ch)) },
-        modifier = Modifier.fillMaxWidth().height(84.dp),
+        modifier = Modifier.fillMaxWidth().height(if (Mobile) 70.dp else 84.dp),
         scale = 1.02f,
     ) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (number != null) T("$number", Modifier.width(44.dp), color = C.dim, size = 16.sp)
-            Logo(ch.logo, ch.name, Modifier.size(104.dp, 60.dp))
-            Spacer(Modifier.width(18.dp))
+        Row(Modifier.fillMaxSize().padding(horizontal = if (Mobile) 10.dp else 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (number != null && Settings.showNumbers.on) T("$number", Modifier.width(if (Mobile) 30.dp else 44.dp), color = C.dim, size = if (Mobile) 13.sp else 16.sp)
+            Logo(ch.logo, ch.name, Modifier.size(if (Mobile) 76.dp else 104.dp, if (Mobile) 44.dp else 60.dp))
+            Spacer(Modifier.width(if (Mobile) 12.dp else 18.dp))
             Column(Modifier.weight(1f)) {
-                T(ch.name, size = 18.sp, weight = FontWeight.Bold)
+                T(ch.name, size = if (Mobile) 16.sp else 18.sp, weight = FontWeight.Bold)
                 if (now != null) {
-                    T("${clock(now.start)}  ${now.title}", size = 15.sp, color = C.text.copy(alpha = 0.85f))
+                    T("${clock(now.start)}  ${now.title}", size = if (Mobile) 13.sp else 15.sp, color = C.text.copy(alpha = 0.85f))
                     Spacer(Modifier.height(5.dp))
-                    ProgressBar(now.progress(), Modifier.width(220.dp))
+                    ProgressBar(now.progress(), Modifier.width(if (Mobile) 140.dp else 220.dp))
                 }
             }
-            if (next != null) Column(Modifier.width(300.dp).padding(start = 16.dp)) {
+            if (ch.archiveDays > 0 && !Mobile) Icon(Ic.Restart, C.dim, 18.dp, Modifier.padding(end = 12.dp))
+            if (next != null && !Mobile) Column(Modifier.width(300.dp).padding(start = 16.dp)) {
                 T("Straks ${clock(next.start)}", size = 13.sp, color = C.dim)
                 T(next.title, size = 15.sp, color = C.dim)
             }
@@ -142,7 +162,7 @@ fun CategoryOrderScreen() {
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 32.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = Pad, vertical = if (Mobile) 8.dp else 32.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 T("Live TV-groepen ordenen", size = 28.sp, weight = FontWeight.Bold)
@@ -204,7 +224,7 @@ fun CategoryOrderScreen() {
                     Spacer(Modifier.width(12.dp))
                     Focusable(
                         onClick = { Library.toggleHidden(id) },
-                        modifier = Modifier.size(width = 150.dp, height = 56.dp),
+                        modifier = Modifier.size(width = if (Mobile) 116.dp else 150.dp, height = 56.dp),
                         scale = 1.04f,
                     ) {
                         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {

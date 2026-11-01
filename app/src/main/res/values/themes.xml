@@ -6,6 +6,6 @@
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowFullscreen">true</item>
     </style>
-    <color name="bg">#0B0E14</color>
-    <color name="accent">#3D8BFF</color>
+    <color name="bg">#08110F</color>
+    <color name="accent">#1FB58F</color>
 </resources>

@@ -1,0 +1,11 @@
+name = "iptimtv"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+routes = [{ pattern = "iptv.timvanbergen.nl", custom_domain = true }]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "iptimtv-db"
+database_id = "23a69764-aa3f-4382-9574-38ced4970edc"
+migrations_dir = "migrations"
