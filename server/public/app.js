@@ -55,8 +55,12 @@ function toast(text) {
 }
 
 // ---------- server ----------
+// De http-versie (poort 8080) is voor providers die alleen http hebben en de IPTIMTV-server blokkeren:
+// de browser haalt dan alles zelf bij de provider op. Het account blijft via https gaan.
+const onHttp = location.protocol === 'http:';
+const API = onHttp && location.hostname === 'iptv.timvanbergen.nl' ? 'https://iptv.timvanbergen.nl/api/' : '/api/';
 async function api(path, opts = {}) {
-  const res = await fetch('/api/' + path, {
+  const res = await fetch(API + path, {
     ...opts,
     headers: { 'content-type': 'application/json', ...(S.token ? { authorization: 'Bearer ' + S.token } : {}) },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -67,6 +71,15 @@ async function api(path, opts = {}) {
   return data;
 }
 const px = (url) => `/proxy?t=${S.token}&u=${encodeURIComponent(url)}`;
+/** Vanuit de browser rechtstreeks naar de provider (kan alleen op de http-versie). */
+const browserDirect = (p) => p && isDirect(p) && onHttp;
+const pfetch = (url) => fetch(browserDirect(active()) ? url : px(url));
+
+/** Naar de http-versie van de site, ingelogd en met dezelfde login actief. */
+function goHttp() {
+  const data = btoa(JSON.stringify({ token: S.token, username: S.username, active: S.activeId, direct: S.activeId }));
+  location.replace(`http://${location.hostname}:8080/#t=${data}`);
+}
 
 async function pullSync() {
   const { items } = await api('sync');
@@ -98,7 +111,7 @@ async function cached(p, name, url, force) {
   }
   let res;
   for (let attempt = 0; attempt < 4; attempt++) {
-    res = await fetch(px(url) + (force ? '&fresh=1' : ''));
+    res = browserDirect(p) ? await fetch(url) : await fetch(px(url) + (force ? '&fresh=1' : ''));
     if (res.status !== 429) break;
     // Provider remt af: steeds iets langer wachten.
     S.loading = 'Je provider vraagt om even te wachten…';
@@ -147,7 +160,7 @@ async function gunzipJson(res) {
 
 /** De lijsten die de tv- of telefoon-app in je account heeft gezet (null als die er niet zijn). */
 async function fromAccount(p) {
-  const res = await fetch('/api/catalog/' + p.id, { headers: { authorization: 'Bearer ' + S.token } });
+  const res = await fetch(API + 'catalog/' + p.id, { headers: { authorization: 'Bearer ' + S.token } });
   if (!res.ok) return null;
   const d = await gunzipJson(res);
   const m3u = p.type === 'M3U';
@@ -167,27 +180,15 @@ async function fromAccount(p) {
   };
 }
 
-async function loadFromAccount(p) {
-  S.loading = 'Lijsten uit je account laden…';
-  render();
-  const cat = await fromAccount(p).catch(() => null);
-  if (!cat) {
-    throw new Error('Je provider blokkeert verzoeken vanaf de IPTIMTV-server. Open de tv- of telefoon-app één keer '
-      + '(ingelogd met je IPTIMTV-account): die zet je lijsten in je account en dan verschijnen ze hier.');
-  }
-  S.cat = cat;
-}
-
 async function loadCatalog(force = false) {
   const p = active();
   if (!p) return;
   S.loading = 'Kanalen en films laden…';
   render();
-  if (force) setDirect(p, false);
+  if (isDirect(p) && !onHttp) return goHttp();
+  const gen = (S.loadGen = (S.loadGen || 0) + 1);
   try {
-    if (isDirect(p)) {
-      await loadFromAccount(p);
-    } else if (p.type === 'M3U') {
+    if (p.type === 'M3U') {
       S.cat = parseM3u(await cached(p, 'm3u', p.m3uUrl, force));
     } else {
       const get = async (a) => {
@@ -210,7 +211,7 @@ async function loadCatalog(force = false) {
           out.push(await get(a).catch(() => []));
         }
         const [vc, vs, sc, ss] = out;
-        if (isDirect(p)) return;
+        if (gen !== S.loadGen) return;
         Object.assign(S.cat, buildVod(vc, vs, sc, ss));
         render();
       };
@@ -237,11 +238,16 @@ async function loadCatalog(force = false) {
     S.byId = new Map(S.cat.live.map((c) => [c.id, c]));
     S.loadError = null;
   } catch (e) {
-    // De server komt niet bij je provider: dan de lijsten uit je account proberen.
-    if (!isDirect(p)) {
+    const msg = String(e.message || e);
+    // De IPTIMTV-server komt niet bij je provider: dan haalt je browser het zelf op (via de http-versie).
+    if (!isDirect(p) && /^Server (403|5\d\d)/.test(msg)) {
+      setDirect(p, true);
+      return onHttp ? loadCatalog() : goHttp();
+    }
+    // Ook de browser komt er niet bij: dan de lijsten die de app in je account heeft gezet.
+    if (isDirect(p)) {
       const cat = await fromAccount(p).catch(() => null);
       if (cat) {
-        setDirect(p, true);
         S.vodLoading = false;
         S.cat = cat;
         S.byId = new Map(cat.live.map((c) => [c.id, c]));
@@ -250,11 +256,9 @@ async function loadCatalog(force = false) {
         return render();
       }
     }
-    S.loadError = String(e.message || e).slice(0, 160);
-    if (!isDirect(p) && /^Server (403|5\d\d)/.test(S.loadError)) {
-      S.loadError += ' — Je provider laat de IPTIMTV-server niet toe. Open de tv- of telefoon-app één keer (ingelogd met je IPTIMTV-account), '
-        + 'dan zet die je lijsten in je account en kun je hier kijken.';
-    }
+    S.loadError = (isDirect(p) && /fetch|network|load/i.test(msg)
+      ? 'Je browser kon je provider niet bereiken. Open de tv- of telefoon-app één keer (ingelogd met je IPTIMTV-account); die zet je lijsten in je account.'
+      : msg).slice(0, 300);
     toast('Kon je lijsten niet laden');
     S.cat = { liveCats: [], live: [], movieCats: [], movies: [], showCats: [], shows: [] };
     S.byId = new Map();
@@ -280,9 +284,9 @@ function epgQueue(task) {
 const epgCache = new Map();
 async function nowOn(ch) {
   const p = active();
-  if (!p || p.type !== 'XTREAM' || isDirect(p)) return null;
+  if (!p || p.type !== 'XTREAM' || (isDirect(p) && !onHttp)) return null;
   if (epgCache.has(ch.id)) return epgCache.get(ch.id);
-  const promise = epgQueue(() => fetch(px(`${xbase(p)}&action=get_short_epg&stream_id=${ch.id}&limit=2`)))
+  const promise = epgQueue(() => pfetch(`${xbase(p)}&action=get_short_epg&stream_id=${ch.id}&limit=2`))
     .then((r) => { if (r.status === 429) { epgPauseUntil = Date.now() + 60000; epgCache.delete(ch.id); throw new Error(); } return r.json(); })
     .then((d) => {
       const dec = (s) => { try { return decodeURIComponent(escape(atob(s))); } catch { return s; } };
@@ -570,7 +574,8 @@ function renderAddLogin(first, error = '', type = 'XTREAM') {
       try {
         const res = await fetch(px(xbase(p)));
         const text = await res.text();
-        if (!res.ok) problem = `De server kon je provider niet bereiken (${res.status}): ${text.slice(0, 120)}`;
+        if (res.status === 403 || res.status >= 500) setDirect(p, true);
+        else if (!res.ok) problem = `De server kon je provider niet bereiken (${res.status}): ${text.slice(0, 120)}`;
         else {
           const info = JSON.parse(text);
           if (String(info?.user_info?.auth) !== '1') problem = 'Je provider zegt dat gebruikersnaam of wachtwoord niet klopt.';
@@ -614,7 +619,7 @@ function openMovie(m) {
   $('.sheet [data-act="movie-start"]').onclick = () => play([item], 0, false, 0);
   $('.sheet [data-act="movie-resume"]')?.addEventListener('click', () => play([item], 0, false, h.position));
   const p = active();
-  if (p.type === 'XTREAM' && !isDirect(p)) fetch(px(`${xbase(p)}&action=get_vod_info&vod_id=${m.id}`)).then((r) => r.json()).then((d) => { const el = $('#plot'); if (el) el.textContent = d?.info?.plot || ''; }).catch(() => {});
+  if (p.type === 'XTREAM' && (!isDirect(p) || onHttp)) pfetch(`${xbase(p)}&action=get_vod_info&vod_id=${m.id}`).then((r) => r.json()).then((d) => { const el = $('#plot'); if (el) el.textContent = d?.info?.plot || ''; }).catch(() => {});
 }
 
 async function openShow(s) {
@@ -627,14 +632,16 @@ async function openShow(s) {
       id: String(e.id), season: Number(e.season) || season, num: Number(e.episode_num) || 0, title: e.title || `Aflevering ${e.episode_num}`,
       url: `${p.server}/series/${p.username}/${p.password}/${e.id}.${e.container_extension || 'mp4'}`, image: e.info?.movie_image,
     });
-    if (isDirect(p)) {
-      const res = await fetch(`/api/catalog/${p.id}/series/${s.id}`, { headers: { authorization: 'Bearer ' + S.token } });
+    let d = null;
+    if (!isDirect(p) || onHttp) d = await pfetch(`${xbase(p)}&action=get_series_info&series_id=${s.id}`).then((r) => r.json()).catch(() => null);
+    if (!d && isDirect(p)) {
+      const res = await fetch(`${API}catalog/${p.id}/series/${s.id}`, { headers: { authorization: 'Bearer ' + S.token } });
       if (!res.ok) { $('#eps').textContent = 'Open deze serie één keer in de tv- of telefoon-app, dan staan de afleveringen hier ook.'; return; }
       for (const [id, season, num, title, ext, image] of await gunzipJson(res)) {
         add({ id, season, episode_num: num, title, container_extension: ext, info: { movie_image: image } }, season);
       }
     } else {
-      const d = await (await fetch(px(`${xbase(p)}&action=get_series_info&series_id=${s.id}`))).json();
+      if (!d) throw new Error();
       if (Array.isArray(d.episodes)) d.episodes.forEach((list, i) => (Array.isArray(list) ? list : [list]).forEach((e) => add(e, i + 1)));
       else Object.entries(d.episodes || {}).forEach(([k, list]) => list.forEach((e) => add(e, Number(k))));
     }
@@ -859,6 +866,16 @@ function logout() {
 }
 
 async function boot() {
+  if (location.hash.startsWith('#t=')) {
+    try {
+      const d = JSON.parse(atob(location.hash.slice(3)));
+      Object.assign(S, { token: d.token, username: d.username, activeId: d.active });
+      localStorage.setItem('token', d.token); localStorage.setItem('username', d.username || '');
+      if (d.active) localStorage.setItem('active', d.active);
+      if (d.direct) localStorage.setItem('direct:' + d.direct, '1');
+    } catch { /* ongeldig */ }
+    history.replaceState(null, '', location.pathname);
+  }
   if (!S.token) return render();
   S.loading = 'Je account laden…';
   try {
