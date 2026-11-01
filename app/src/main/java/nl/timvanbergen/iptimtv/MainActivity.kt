@@ -13,7 +13,10 @@ import nl.timvanbergen.iptimtv.data.Cloud
 import nl.timvanbergen.iptimtv.data.History
 import nl.timvanbergen.iptimtv.data.Library
 import nl.timvanbergen.iptimtv.data.Recordings
+import nl.timvanbergen.iptimtv.data.Reminders
+import android.content.Intent
 import nl.timvanbergen.iptimtv.data.Settings
+import nl.timvanbergen.iptimtv.data.Sync
 import nl.timvanbergen.iptimtv.data.Updater
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -26,7 +29,9 @@ class App : Application() {
         Settings.init(this)
         History.init(this)
         Cloud.init(this)
+        Sync.init(this)
         Recordings.init(this)
+        Reminders.init(this)
         Library.init(this)
     }
 }
@@ -36,6 +41,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (BuildConfig.MOBILE) {
             enableEdgeToEdge()
+            WindowCompat.getInsetsController(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
         } else {
             WindowCompat.getInsetsController(window, window.decorView).apply {
                 hide(WindowInsetsCompat.Type.systemBars())
@@ -43,6 +49,20 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent { IptimApp(onExit = { finish() }) }
+        handle(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
+    }
+
+    /** Getikt op een wedstrijdmelding: naar Sport. */
+    private fun handle(intent: Intent?) {
+        if (intent?.getStringExtra("open") == "sport") {
+            Nav.play = null
+            Nav.tab = nl.timvanbergen.iptimtv.ui.Tab.SPORT
+        }
     }
 
     /** Tijdens het kijken gaan alle toetsen rechtstreeks naar de speler. */

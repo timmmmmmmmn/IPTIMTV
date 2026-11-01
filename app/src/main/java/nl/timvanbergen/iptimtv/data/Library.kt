@@ -16,6 +16,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
@@ -86,8 +87,48 @@ object Library {
         }
     }
 
-    private fun persistProfiles() {
+    private fun persistProfiles(fromSync: Boolean = false) {
         prefs.edit().putString("profiles", JSONArray(profiles.map { it.toJson() }).toString()).apply()
+        if (!fromSync) Sync.changed("profiles", JSONArray(profiles.map { it.toJson() }))
+    }
+
+    // ---------- synchronisatie met je IPTIMTV-account ----------
+
+    fun profilesJson() = JSONArray(profiles.map { it.toJson() })
+
+    /** Logins uit je account overnemen (van een ander apparaat of de website). */
+    fun applyProfiles(a: JSONArray) {
+        val list = List(a.length()) { Profile.fromJson(a.getJSONObject(it)) }
+        val before = profiles.toList()
+        profiles.clear(); profiles.addAll(list)
+        persistProfiles(fromSync = true)
+        val current = active
+        when {
+            current == null || list.none { it.id == current.id } -> list.firstOrNull()?.let { activate(it) } ?: run {
+                active = null; catalog = Catalog()
+            }
+            // Gegevens van de actieve login gewijzigd (bijv. nieuw wachtwoord): opnieuw laden.
+            before.firstOrNull { it.id == current.id } != list.first { it.id == current.id } -> activate(list.first { it.id == current.id }, forceRefresh = true)
+        }
+    }
+
+    fun userDataJson(profileId: String): JSONObject {
+        val u = app.getSharedPreferences("user_$profileId", Context.MODE_PRIVATE)
+        return JSONObject()
+            .put("favorites", JSONArray(u.getString("favorites", "[]")))
+            .put("groups", JSONArray(u.getString("groups", "[]")))
+            .put("liveOrder", JSONArray(u.getString("liveOrder", "[]")))
+            .put("hidden", JSONArray(u.getString("hidden", "[]")))
+    }
+
+    fun applyUserData(profileId: String, o: JSONObject) {
+        app.getSharedPreferences("user_$profileId", Context.MODE_PRIVATE).edit()
+            .putString("favorites", (o.optJSONArray("favorites") ?: JSONArray()).toString())
+            .putString("groups", (o.optJSONArray("groups") ?: JSONArray()).toString())
+            .putString("liveOrder", (o.optJSONArray("liveOrder") ?: JSONArray()).toString())
+            .putString("hidden", (o.optJSONArray("hidden") ?: JSONArray()).toString())
+            .apply()
+        active?.takeIf { it.id == profileId }?.let { loadUserData(it) }
     }
 
     fun activate(p: Profile, forceRefresh: Boolean = false) {
@@ -211,6 +252,7 @@ object Library {
             .putString("liveOrder", JSONArray(liveOrder.toList()).toString())
             .putString("hidden", JSONArray(hiddenCategories.toList()).toString())
             .apply()
+        Sync.changed("user:${p.id}", userDataJson(p.id))
     }
 
     fun setFavorites(ids: List<String>) {

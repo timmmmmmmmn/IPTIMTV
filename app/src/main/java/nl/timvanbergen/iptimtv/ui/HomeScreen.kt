@@ -166,7 +166,10 @@ private fun ChannelRow(
 ) {
     Column {
         RowTitle(title)
+        // Nieuwe lijst als de rij van leeg naar gevuld gaat, anders blijft hij op de laatste tegel staan.
+        val state = remember(channels.isEmpty()) { androidx.compose.foundation.lazy.LazyListState() }
         LazyRow(
+            state = state,
             contentPadding = PaddingValues(horizontal = Pad, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(if (Mobile) 12.dp else 18.dp),
         ) {

@@ -7,8 +7,14 @@ Eenvoudige IPTV-app voor Android TV / Google TV én Android-telefoons. Simpel vo
 - **Sport**: wedstrijden van vandaag (Eredivisie, Premier League, CL, ...) en op welke zenders ze te zien zijn
 - **Films** en **Series**, **Zoeken** (ook in de gids)
 - **Opnemen** naar `Download/IPTIMTV`, ook gepland vanuit de gids
-- **Account** op iptv.timvanbergen.nl: kijkgeschiedenis en kijktijd op al je apparaten
+- **Account** op iptv.timvanbergen.nl: logins, kanalen, groepen, kijkgeschiedenis en kijktijd op al je apparaten
+- **Wedstrijdmeldingen**: 5 minuten voor de aftrap een melding, en tijdens het kijken een banner
 - **Automatische updates** vanuit de GitHub-releases
+
+## Web en iPhone
+
+Op **https://iptv.timvanbergen.nl** staat de webversie: inloggen met je IPTIMTV-account en je hebt meteen je logins, kanalen en kijkgeschiedenis.
+Op de iPhone: open de site in Safari, tik op *Delen* → *Zet op beginscherm*; dan werkt hij als app.
 
 ## Installeren
 

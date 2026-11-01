@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +40,7 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import nl.timvanbergen.iptimtv.data.Library
 import nl.timvanbergen.iptimtv.data.Match
+import nl.timvanbergen.iptimtv.data.Reminders
 import nl.timvanbergen.iptimtv.data.Sport
 import nl.timvanbergen.iptimtv.data.SportHit
 import nl.timvanbergen.iptimtv.data.Team
@@ -130,6 +132,9 @@ private fun MatchLine(m: Match) {
                 T(if (m.state == "pre") "–" else "${m.home.score ?: 0} - ${m.away.score ?: 0}", size = if (Mobile) 18.sp else 24.sp, weight = FontWeight.Black)
             }
             TeamSide(m.away, Modifier.weight(1f), alignEnd = false)
+            Box(Modifier.width(if (Mobile) 24.dp else 40.dp), contentAlignment = Alignment.CenterEnd) {
+                if (Reminders.has(m)) Icon(Icons.Filled.Notifications, C.accent, if (Mobile) 18.dp else 24.dp)
+            }
         }
     }
 }
@@ -173,6 +178,23 @@ fun MatchInfo(m: Match) {
             TeamSide(m.away, Modifier.weight(1f), alignEnd = false)
         }
         if (m.state == "in") T("Live · ${m.detail}", color = C.live, weight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+        if (m.state == "pre" && m.start > System.currentTimeMillis()) {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            Spacer(Modifier.height(14.dp))
+            val on = Reminders.has(m)
+            Button(
+                if (on) "Herinnering staat aan" else "Herinner me 5 min van tevoren",
+                icon = Icons.Filled.Notifications,
+                selected = on,
+                onClick = {
+                    // Op Android 13+ eerst toestemming vragen voor meldingen.
+                    if (!on && android.os.Build.VERSION.SDK_INT >= 33) (context as? android.app.Activity)?.requestPermissions(
+                        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 7,
+                    )
+                    Reminders.toggle(m)
+                },
+            )
+        }
         Spacer(Modifier.height(20.dp))
         when {
             hits == null -> T("Zenders zoeken…", color = C.dim, size = 18.sp)

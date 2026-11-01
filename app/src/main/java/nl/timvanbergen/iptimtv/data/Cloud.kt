@@ -31,6 +31,7 @@ object Cloud {
     private var token: String? = null
 
     val loggedIn get() = username != null && token != null
+    fun token() = token.orEmpty()
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("cloud", Context.MODE_PRIVATE)
@@ -82,6 +83,7 @@ object Cloud {
     /** Statistieken en geschiedenis ophalen (bij openen van de app en na inloggen). */
     suspend fun refresh() {
         if (!loggedIn) return
+        withContext(Dispatchers.Main) { Sync.pull() }
         withContext(Dispatchers.IO) {
             runCatching {
                 val tz = -TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000

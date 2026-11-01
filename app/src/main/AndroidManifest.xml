@@ -44,6 +44,9 @@
         <receiver
             android:name=".data.RecordAlarm"
             android:exported="false" />
+        <receiver
+            android:name=".data.ReminderAlarm"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

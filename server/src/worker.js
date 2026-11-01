@@ -1,6 +1,5 @@
 // IPTIMTV-server: accounts en kijkgeschiedenis voor de app, plus een kleine downloadpagina.
 const enc = new TextEncoder();
-const RELEASES = 'https://github.com/timmmmmmmmn/IPTIMTV/releases/latest';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -90,6 +89,135 @@ async function stats(env, userId, tzOffsetMin) {
   };
 }
 
+// ---------- versleuteling van gesynchroniseerde logins ----------
+// SECRET_KEY is een Cloudflare-secret; zonder sleutel (lokaal testen) wordt niet versleuteld.
+const keyCache = {};
+async function aesKey(env) {
+  if (!env.SECRET_KEY) return null;
+  if (!keyCache.aes) {
+    const raw = await crypto.subtle.digest('SHA-256', enc.encode('sync:' + env.SECRET_KEY));
+    keyCache.aes = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  }
+  return keyCache.aes;
+}
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+async function seal(env, text) {
+  const key = await aesKey(env);
+  if (!key) return text;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(text));
+  return 'v1:' + b64(iv) + ':' + b64(data);
+}
+async function unseal(env, stored) {
+  if (!stored.startsWith('v1:')) return stored;
+  const key = await aesKey(env);
+  const [, iv, data] = stored.split(':');
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, key, unb64(data));
+  return new TextDecoder().decode(plain);
+}
+
+// ---------- proxy voor de webversie ----------
+async function hmac(env, text) {
+  if (!keyCache.hmac) {
+    keyCache.hmac = await crypto.subtle.importKey('raw', enc.encode('proxy:' + (env.SECRET_KEY || 'dev')),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  }
+  return hex(await crypto.subtle.sign('HMAC', keyCache.hmac, enc.encode(text))).slice(0, 32);
+}
+
+// Hosts uit de logins van een gebruiker (alleen daarheen mag de proxy zonder handtekening).
+const hostCache = new Map();
+async function allowedHosts(env, userId) {
+  const hit = hostCache.get(userId);
+  if (hit && hit.at > Date.now() - 60000) return hit.hosts;
+  const row = await env.DB.prepare("SELECT value FROM sync WHERE user_id = ? AND key = 'profiles'").bind(userId).first();
+  const hosts = new Set();
+  if (row) {
+    try {
+      for (const p of JSON.parse(await unseal(env, row.value))) {
+        for (const u of [p.server, p.m3uUrl, p.epgUrl]) {
+          try { if (u) hosts.add(new URL(u).host); } catch {}
+        }
+      }
+    } catch {}
+  }
+  hostCache.set(userId, { at: Date.now(), hosts });
+  return hosts;
+}
+
+const sessionCache = new Map();
+async function userFromToken(env, token) {
+  if (!/^[0-9a-f]{64}$/.test(token || '')) return null;
+  const hit = sessionCache.get(token);
+  if (hit && hit.at > Date.now() - 300000) return hit.user;
+  const row = await env.DB.prepare('SELECT u.id FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?')
+    .bind(await sha256(token)).first();
+  sessionCache.set(token, { at: Date.now(), user: row ? row.id : null });
+  return row ? row.id : null;
+}
+
+const cors = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'content-length,content-range' };
+
+async function proxied(env, base, token, target) {
+  const u = new URL(target, base).toString();
+  return `/proxy?t=${token}&s=${await hmac(env, u)}&u=${encodeURIComponent(u)}`;
+}
+
+/** HLS-playlist herschrijven zodat alle stukjes ook via de proxy gaan. */
+async function rewritePlaylist(env, text, base, token) {
+  const out = [];
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) { out.push(line); continue; }
+    if (t.startsWith('#')) {
+      const m = t.match(/URI="([^"]+)"/);
+      out.push(m ? t.replace(m[1], await proxied(env, base, token, m[1])) : t);
+    } else {
+      out.push(await proxied(env, base, token, t));
+    }
+  }
+  return out.join('\n');
+}
+
+async function proxy(request, env, url) {
+  const token = url.searchParams.get('t');
+  const target = url.searchParams.get('u');
+  const sig = url.searchParams.get('s');
+  const userId = await userFromToken(env, token);
+  if (!userId || !target) return new Response('Niet ingelogd', { status: 401, headers: cors });
+  let t;
+  try { t = new URL(target); } catch { return new Response('Ongeldig', { status: 400, headers: cors }); }
+  if (!/^https?:$/.test(t.protocol)) return new Response('Ongeldig', { status: 400, headers: cors });
+  const signed = sig && sig === (await hmac(env, t.toString()));
+  if (!signed && !(await allowedHosts(env, userId)).has(t.host)) {
+    return new Response('Deze server hoort niet bij je logins', { status: 403, headers: cors });
+  }
+  const headers = { 'user-agent': url.searchParams.get('ua') || 'IPTIMTV/1.0' };
+  const range = request.headers.get('range');
+  if (range) headers.range = range;
+  const res = await fetch(t.toString(), { headers, redirect: 'follow' });
+  const type = res.headers.get('content-type') || '';
+  const finalUrl = res.url || t.toString();
+  if (/mpegurl/i.test(type) || /\.m3u8(\?|$)/i.test(finalUrl)) {
+    const text = await res.text();
+    if (text.trimStart().startsWith('#EXTM3U') && /#EXT-X-/.test(text)) {
+      return new Response(await rewritePlaylist(env, text, finalUrl, token), {
+        status: res.status, headers: { ...cors, 'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-store' }
+      });
+    }
+    return new Response(text, { status: res.status, headers: { ...cors, 'content-type': type || 'text/plain' } });
+  }
+  const h = new Headers(cors);
+  for (const k of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+    const v = res.headers.get(k);
+    if (v) h.set(k, v);
+  }
+  h.set('cache-control', 'no-store');
+  return new Response(res.body, { status: res.status, headers: h });
+}
+
 async function api(request, env, path) {
   const m = request.method;
 
@@ -128,6 +256,32 @@ async function api(request, env, path) {
     // tz = minuten verschil met UTC zoals JavaScript het geeft (Nederland in de winter: -60).
     const tz = parseInt(new URL(request.url).searchParams.get('tz') || '0', 10) || 0;
     return json({ username: user.username, stats: await stats(env, user.id, tz) });
+  }
+
+  // Synchroniseren: logins ("profiles") en per login favorieten/groepen ("user:<id>"). Nieuwste wint.
+  if (path === 'sync' && m === 'GET') {
+    const rows = await env.DB.prepare('SELECT key, value, updated FROM sync WHERE user_id = ?').bind(user.id).all();
+    const items = [];
+    for (const r of rows.results) {
+      try { items.push({ key: r.key, value: JSON.parse(await unseal(env, r.value)), updated: r.updated }); } catch {}
+    }
+    return json({ items });
+  }
+
+  if (path === 'sync' && m === 'PUT') {
+    const b = await body(request);
+    const key = clip(b.key, 100);
+    if (!key || !/^(profiles|user:[A-Za-z0-9_-]{1,40})$/.test(key) || b.value === undefined) return fail(400, 'Onvolledige gegevens');
+    const text = JSON.stringify(b.value);
+    if (text.length > 512 * 1024) return fail(413, 'Te groot');
+    const updated = int(b.updated) || Date.now();
+    await env.DB.prepare(
+      `INSERT INTO sync (user_id, key, value, updated) VALUES (?, ?, ?, ?)
+       ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value, updated = excluded.updated
+       WHERE excluded.updated > sync.updated`
+    ).bind(user.id, key, await seal(env, text), updated).run();
+    if (key === 'profiles') hostCache.delete(user.id);
+    return json({ ok: true });
   }
 
   if (path === 'history' && m === 'GET') {
@@ -182,17 +336,12 @@ async function api(request, env, path) {
   return fail(404, 'Onbekend');
 }
 
-const page = `<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IPTIMTV</title><style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear-gradient(160deg,#0f8a4a,#00806e);font:16px system-ui,sans-serif;color:#fff;text-align:center}
-main{padding:32px}h1{font-size:56px;margin:0 0 8px;letter-spacing:2px;font-weight:900}p{opacity:.85;max-width:420px;margin:0 auto 28px}
-a{display:inline-block;margin:6px;padding:14px 24px;border-radius:999px;background:#fff;color:#0b5a3f;font-weight:700;text-decoration:none}
-</style></head><body><main><h1>IPTIMTV</h1><p>Simpele IPTV-app voor je tv en telefoon. Log in de app in met je IPTIMTV-account om je kijkgeschiedenis overal te zien.</p>
-<a href="${RELEASES}">Download de app</a></main></body></html>`;
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: { ...cors, 'access-control-allow-headers': 'authorization,content-type,range', 'access-control-allow-methods': 'GET,POST,PUT,DELETE' } });
+    }
     if (url.pathname.startsWith('/api/')) {
       try {
         return await api(request, env, url.pathname.slice(5).replace(/\/$/, ''));
@@ -200,7 +349,14 @@ export default {
         return fail(500, 'Serverfout');
       }
     }
-    if (url.pathname === '/') return new Response(page, { headers: { 'content-type': 'text/html; charset=utf-8' } });
-    return new Response('Niet gevonden', { status: 404 });
+    if (url.pathname === '/proxy') {
+      try {
+        return await proxy(request, env, url);
+      } catch (e) {
+        return new Response('Kon de server van je provider niet bereiken', { status: 502, headers: cors });
+      }
+    }
+    // De webapp (statische bestanden in public/).
+    return env.ASSETS.fetch(request);
   }
 };

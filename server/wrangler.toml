@@ -9,3 +9,8 @@ binding = "DB"
 database_name = "iptimtv-db"
 database_id = "23a69764-aa3f-4382-9574-38ced4970edc"
 migrations_dir = "migrations"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+run_worker_first = true

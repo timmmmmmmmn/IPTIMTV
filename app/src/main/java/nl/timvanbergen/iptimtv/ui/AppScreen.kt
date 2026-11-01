@@ -4,6 +4,7 @@ import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,6 +63,9 @@ import nl.timvanbergen.iptimtv.data.Movie
 import nl.timvanbergen.iptimtv.data.Profile
 import nl.timvanbergen.iptimtv.data.Program
 import nl.timvanbergen.iptimtv.data.Recording
+import nl.timvanbergen.iptimtv.data.Reminder
+import nl.timvanbergen.iptimtv.data.Reminders
+import nl.timvanbergen.iptimtv.data.Sport
 import nl.timvanbergen.iptimtv.data.Settings
 import nl.timvanbergen.iptimtv.data.Show
 import nl.timvanbergen.iptimtv.data.SourceType
@@ -223,12 +228,13 @@ private fun AppContent(onExit: () -> Unit) {
     }
     Box(Modifier.fillMaxSize().background(C.bg)) {
         when {
-            Library.profiles.isEmpty() -> WelcomeScreen()
+            Library.profiles.isEmpty() -> Box(if (Mobile) Modifier.systemBarsPadding() else Modifier) { WelcomeScreen() }
             Mobile -> MobileMain(onExit)
             else -> MainScreen(onExit)
         }
         Nav.overlays.lastOrNull()?.let { o -> key(o) { OverlayHost(o) } }
         Nav.play?.let { p -> key(p) { PlayerScreen(p) } }
+        Reminders.banner?.let { r -> key(r) { ReminderBanner(r, Modifier.align(Alignment.TopCenter)) } }
     }
 }
 
@@ -257,7 +263,7 @@ private fun OverlayHost(o: Overlay) {
         Modifier
             .fillMaxSize()
             .background(C.bg.copy(alpha = if (o.isDialog) 0.88f else 1f))
-            .then(if (Mobile) Modifier.padding(top = 24.dp) else Modifier)
+            .then(if (Mobile) Modifier.systemBarsPadding() else Modifier)
             .onFocusChanged { inside = it.hasFocus }
             .focusRequester(focus)
             .focusProperties { onExit = { cancelFocusChange() } }
@@ -289,6 +295,33 @@ private val Overlay.isDialog get() =
     this is Overlay.ChannelMenu || this is Overlay.TextInput || this is Overlay.GroupEdit || this is Overlay.ProfileMenu ||
         this is Overlay.ProgramMenu || this is Overlay.RecordingMenu || this is Overlay.WatchMenu || this is Overlay.Update ||
         this is Overlay.Account
+
+/** Banner van een halve minuut: de wedstrijd begint zo, met de zender waarop hij te zien is. */
+@Composable
+private fun ReminderBanner(r: Reminder, modifier: Modifier) {
+    val channel by produceState<String?>(null, r) {
+        val m = SportState.matches?.firstOrNull { Reminders.idFor(it) == r.id }
+        value = m?.let { Sport.channelsFor(it, Library.catalog, Library.epg).firstOrNull()?.channel?.name }
+    }
+    LaunchedEffect(r) {
+        delay(30_000)
+        if (Reminders.banner == r) Reminders.banner = null
+    }
+    Row(
+        modifier.then(if (Mobile) Modifier.systemBarsPadding() else Modifier).padding(top = 20.dp, start = 16.dp, end = 16.dp)
+            .background(C.accentDeep, RoundedCornerShape(20.dp))
+            .border(1.dp, C.accent, RoundedCornerShape(20.dp))
+            .padding(horizontal = 22.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Ic.Ball, C.text, 28.dp)
+        Spacer(Modifier.width(14.dp))
+        Column {
+            T("${r.title} begint over 5 minuten", size = 19.sp, weight = FontWeight.Bold, maxLines = 2)
+            T(r.league + (channel?.let { " · te zien op $it" } ?: ""), size = 14.sp, color = C.text.copy(alpha = 0.85f), maxLines = 2)
+        }
+    }
+}
 
 /** Optie "laatste kanaal afspelen bij openen". */
 @Composable

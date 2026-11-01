@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +38,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
@@ -115,6 +117,7 @@ fun Focusable(
     val focused by source.collectIsFocusedAsState()
     val s by animateFloatAsState(if (focused && Settings.animations.on && !Mobile) scale else 1f, label = "scale")
     val self = remember { FocusRequester() }
+    val pressed = remember { mutableStateOf(false) }
     Box(
         modifier
             .focusRequester(self)
@@ -123,6 +126,17 @@ fun Focusable(
             .clip(shape)
             .background(if (focused) focusedColor else color)
             .then(if (focused && border) Modifier.border(3.dp, Color.White, shape) else Modifier)
+            .onPreviewKeyEvent {
+                // Alleen reageren op het loslaten van OK als het indrukken ook hier begon. Anders zou het
+                // loslaten na "lang indrukken" meteen het eerste item van het menu dat net openging uitvoeren.
+                val ok = it.key == Key.DirectionCenter || it.key == Key.Enter || it.key == Key.NumPadEnter
+                when {
+                    ok && it.type == KeyEventType.KeyDown -> { if (it.nativeKeyEvent.repeatCount == 0) pressed.value = true; false }
+                    ok && it.type == KeyEventType.KeyUp && !pressed.value -> true
+                    ok && it.type == KeyEventType.KeyUp -> { pressed.value = false; false }
+                    else -> false
+                }
+            }
             .onKeyEvent {
                 // De "menu"-knop op afstandsbedieningen die er een hebben doet hetzelfde als lang drukken.
                 if (onLongClick != null && it.key == Key.Menu && it.type == KeyEventType.KeyUp) {

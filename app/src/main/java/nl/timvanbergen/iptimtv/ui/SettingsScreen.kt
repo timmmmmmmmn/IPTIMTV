@@ -361,7 +361,14 @@ fun WelcomeScreen() {
     Column(Modifier.fillMaxSize().padding(top = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Brand(if (Mobile) 64 else 90)
         Spacer(Modifier.height(6.dp))
-        T("Welkom! Voeg je eerste IPTV-login toe.", color = C.dim, size = 18.sp)
+        T("Welkom! Heb je al een IPTIMTV-account? Dan heb je meteen al je logins en kanalen.", color = C.dim, size = 18.sp, maxLines = 2,
+            modifier = Modifier.padding(horizontal = 16.dp))
+        Spacer(Modifier.height(14.dp))
+        Wrap {
+            Button("Inloggen met IPTIMTV-account", icon = Ic.Cloud, primary = true, onClick = { Nav.open(Overlay.Account(create = false)) })
+        }
+        Spacer(Modifier.height(8.dp))
+        T("Of voeg hieronder zelf een IPTV-login toe:", color = C.dim, size = 15.sp)
         ProfileFormContent(null, standalone = true)
     }
 }
