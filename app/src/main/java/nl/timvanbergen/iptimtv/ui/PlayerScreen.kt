@@ -49,6 +49,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Star
+import nl.timvanbergen.iptimtv.data.League
+import nl.timvanbergen.iptimtv.data.Match
+import nl.timvanbergen.iptimtv.data.Sport
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -181,7 +185,7 @@ private fun resizeMode(v: String) = when (v) {
 }
 
 /** Een regel in het pauzemenu. */
-private class MenuEntry(val label: String, val icon: ImageVector, val value: String? = null, val action: () -> Unit)
+private class MenuEntry(val label: String, val icon: ImageVector?, val value: String? = null, val action: () -> Unit)
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -456,7 +460,49 @@ fun PlayerScreen(pb: Playback) {
     val nowProgram = rememberPrograms(item.epgId, 1).firstOrNull()?.takeIf { it.isLive() }
     @Suppress("UNUSED_EXPRESSION") tracksVersion
     val recording = channel?.let { Recordings.activeFor(it.url) }
+
+    // ---------- stand bij een wedstrijd (alleen als dat aanstaat) ----------
+    var matchTick by remember { mutableIntStateOf(0) }
+    val matchOn by produceState<Pair<League, Match?>?>(null, item.title, nowProgram?.title, Settings.matchTable.value) {
+        value = null
+        if (!pb.live || !Settings.matchTable.on) return@produceState
+        while (true) {
+            value = Sport.matchOn(item.title, nowProgram, runCatching { Sport.todayCached() }.getOrDefault(emptyList()))
+            delay(120_000)
+        }
+    }
+    // Bij openen van de stand ook de wedstrijd zelf vers ophalen (stand en minuut).
+    val liveMatch by produceState<Match?>(null, matchOn, matchTick) {
+        value = matchOn?.second
+        val m = matchOn?.second ?: return@produceState
+        if (matchTick > 0) value = runCatching { Sport.today() }.getOrNull()
+            ?.firstOrNull { it.league.id == m.league.id && it.home.name == m.home.name && it.away.name == m.away.name } ?: m
+    }
+    val showTable = menuPage == "table" || sheet == "table"
+    val table by produceState<Sport.Table?>(null, matchOn?.first?.id, showTable) {
+        value = null
+        val league = matchOn?.first
+        if (league != null && showTable) value = Sport.standings(league)
+    }
+    fun matchLine(m: Match) = "${m.home.short} ${m.home.score ?: "0"} - ${m.away.score ?: "0"} ${m.away.short}"
+    fun matchState(m: Match) = when (m.state) { "pre" -> "aftrap ${clock(m.start)}"; "post" -> "afgelopen"; else -> m.detail }
+
     val entries: List<MenuEntry> = when (menuPage) {
+        "table" -> buildList {
+            add(MenuEntry("Terug", Icons.Filled.Close) { menuPage = "main"; menuIndex = 0 })
+            liveMatch?.let { m -> add(MenuEntry(matchLine(m), Icons.Filled.PlayArrow, matchState(m)) {}) }
+            val t = table
+            when {
+                t == null -> add(MenuEntry("Stand laden…", null) {})
+                t.groups.isEmpty() -> add(MenuEntry("Geen stand", null, "bekertoernooi") {})
+                else -> t.groups.forEach { (name, rows) ->
+                    if (t.groups.size > 1) add(MenuEntry(name, null) {})
+                    rows.forEach { r ->
+                        add(MenuEntry("${r.rank}. ${r.team}", if (Sport.isTeam(r, liveMatch)) Icons.Filled.Star else null, "${r.points} pnt · ${r.played} gs") {})
+                    }
+                }
+            }
+        }
         "record" -> buildList {
             val now = System.currentTimeMillis()
             if (nowProgram != null) add(MenuEntry("Tot einde programma", Ic.Record, "tot ${clock(nowProgram.stop)}") {
@@ -474,6 +520,11 @@ fun PlayerScreen(pb: Playback) {
         else -> buildList {
             if (pb.live) {
                 add(MenuEntry("Kanalenlijst", Icons.Filled.List) { menu = false; panelIndex = index; panel = true; panelTick++ })
+                matchOn?.let { (league, m) ->
+                    add(MenuEntry("Stand ${league.name}", Icons.Filled.Star, m?.let { matchLine(it) }) {
+                        matchTick++; menuPage = "table"; menuIndex = 0
+                    })
+                }
                 if (Mobile) {
                     add(MenuEntry("Volgend kanaal", Ic.SkipNext) { go(index + 1) })
                     add(MenuEntry("Vorig kanaal", Ic.SkipPrev) { go(index - 1) })
@@ -517,6 +568,12 @@ fun PlayerScreen(pb: Playback) {
                 resize = resizeModes[(resizeModes.indexOfFirst { it.first == resize } + 1) % resizeModes.size].first
             })
             add(MenuEntry("Stoppen met kijken", Icons.Filled.Close) { close() })
+        }
+    }
+    LaunchedEffect(table, menuPage) {
+        if (menuPage == "table" && table != null) {
+            val i = entries.indexOfFirst { it.icon == Icons.Filled.Star }
+            if (i > 0) { menuIndex = i; menuTick++ }
         }
     }
     fun openMenu() {
@@ -702,6 +759,7 @@ fun PlayerScreen(pb: Playback) {
                 visible = controls && !panel && sheet == null,
                 item = item, number = index + 1, live = pb.live, playing = playing, position = position, length = length,
                 recording = recording != null, canRestart = restartEntry != null,
+                onTable = if (matchOn != null) ({ matchTick++; sheet = "table" }) else null,
                 onClose = { close() },
                 onChannels = { controls = false; panelIndex = index; panel = true; panelTick++ },
                 onRecord = { sheet = "record" },
@@ -724,14 +782,23 @@ fun PlayerScreen(pb: Playback) {
                             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(MC.TRACK_TYPE_TEXT, true).build()
                         })) + trackChoices(MC.TRACK_TYPE_TEXT).map { (name, act) -> Triple(name, !off && name == currentTrack(MC.TRACK_TYPE_TEXT), act) }
                     }
+                    "table" -> buildList {
+                        liveMatch?.let { m -> add(Triple("${matchLine(m)} · ${matchState(m)}", true) {}) }
+                        val t = table
+                        if (t == null) add(Triple("Stand laden…", false) {})
+                        else t.groups.forEach { (name, rows) ->
+                            if (t.groups.size > 1) add(Triple(name, false) {})
+                            rows.forEach { r -> add(Triple("${r.rank}. ${r.team} · ${r.points} pnt (${r.played})", Sport.isTeam(r, liveMatch)) {}) }
+                        }
+                    }
                     else -> recordOptions().map { (label, act) -> Triple(label, false, act) }
                 }
                 OptionSheet(
-                    title = when (which) { "audio" -> "Geluid"; "subs" -> "Ondertitels"; else -> if (recording != null) "Opname" else "Opnemen" },
+                    title = when (which) { "audio" -> "Geluid"; "subs" -> "Ondertitels"; "table" -> "Stand ${matchOn?.first?.name ?: ""}"; else -> if (recording != null) "Opname" else "Opnemen" },
                     options = if (which == "record" && recording != null) listOf(Triple("Opname stoppen", false) { Recordings.stop(recording); say("Opname gestopt") }) else options,
-                    empty = if (which == "audio") "Er is maar één geluidsspoor" else "Niets te kiezen",
+                    empty = when (which) { "audio" -> "Er is maar één geluidsspoor"; "table" -> "Geen stand (bekertoernooi)"; else -> "Niets te kiezen" },
                     modifier = Modifier.align(Alignment.BottomCenter),
-                    onPick = { it(); sheet = null },
+                    onPick = { it(); if (sheet != "table") sheet = null },
                     onClose = { sheet = null },
                 )
             }
@@ -744,7 +811,12 @@ fun PlayerScreen(pb: Playback) {
             Modifier.align(Alignment.CenterEnd),
             enter = slideInHorizontally { it } + fadeIn(),
             exit = slideOutHorizontally { it } + fadeOut(),
-        ) { PauseMenu(if (menuPage == "record") "Opnemen" else if (pb.live) item.title else "Gepauzeerd", entries, menuIndex) }
+        ) { PauseMenu(when {
+            menuPage == "record" -> "Opnemen"
+            menuPage == "table" -> "Stand ${matchOn?.first?.name ?: ""}"
+            pb.live -> item.title
+            else -> "Gepauzeerd"
+        }, entries, menuIndex) }
         }
 
         AnimatedVisibility(
@@ -779,7 +851,7 @@ private fun RoundButton(icon: ImageVector, size: Int, onClick: () -> Unit, tint:
 @Composable
 private fun MobileControls(
     visible: Boolean, item: PlayItem, number: Int, live: Boolean, playing: Boolean, position: Long, length: Long,
-    recording: Boolean, canRestart: Boolean,
+    recording: Boolean, canRestart: Boolean, onTable: (() -> Unit)?,
     onClose: () -> Unit, onChannels: () -> Unit, onRecord: () -> Unit, onAudio: () -> Unit, onSubs: () -> Unit,
     onAspect: () -> Unit, onRestart: () -> Unit, onPrev: () -> Unit, onNext: () -> Unit, onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit, onTouch: () -> Unit,
@@ -800,6 +872,7 @@ private fun MobileControls(
                 }
                 if (live) {
                     QuickButton(Icons.Filled.List, "Kanalen") { onTouch(); onChannels() }
+                    if (onTable != null) QuickButton(Icons.Filled.Star, "Stand") { onTouch(); onTable() }
                     if (canRestart) QuickButton(Ic.Restart, "Begin") { onTouch(); onRestart() }
                     QuickButton(Ic.Record, if (recording) "Opname" else "Opnemen", tint = if (recording) C.live else Color.White) { onTouch(); onRecord() }
                 }
@@ -965,7 +1038,7 @@ private fun PauseMenu(title: String, entries: List<MenuEntry>, highlighted: Int)
                         .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(e.icon, if (hl) Color.Black else C.accent, 24.dp)
+                    if (e.icon != null) Icon(e.icon, if (hl) Color.Black else C.accent, 24.dp) else Spacer(Modifier.width(24.dp))
                     Spacer(Modifier.width(14.dp))
                     T(e.label, size = 18.sp, weight = FontWeight.Bold, color = if (hl) Color.Black else C.text, modifier = Modifier.weight(1f))
                     if (e.value != null) T(e.value, size = 15.sp, color = if (hl) Color.DarkGray else C.dim, modifier = Modifier.padding(start = 8.dp))

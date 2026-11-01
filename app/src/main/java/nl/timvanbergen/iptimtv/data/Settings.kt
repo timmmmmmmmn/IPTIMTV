@@ -61,8 +61,10 @@ object Settings {
         "home" to "Startscherm", "last" to "Laatste kanaal afspelen")
 
     // ---------- Speler ----------
-    val okLive = pick("ok_live", "OK-knop bij live tv", "Wat OK doet tijdens het kijken. Het andere zit onder lang OK.", "list",
-        "list" to "Kanalenlijst", "menu" to "Pauzemenu")
+    val okLive = pick("ok_live2", "OK-knop bij live tv", "Wat OK doet tijdens het kijken. Het andere zit onder lang OK.", "menu",
+        "menu" to "Pauzemenu", "list" to "Kanalenlijst")
+    val matchTable = toggle("match_table", "Stand bij wedstrijden",
+        "Als er een wedstrijd op is, staat in het pauzemenu de stand van die competitie.", false)
     val zapDirection = pick("zap_dir", "Pijltje omhoog", "Welke kant je op zapt met omhoog.", "next",
         "next" to "Volgend kanaal", "prev" to "Vorig kanaal")
     val zapWrap = toggle("zap_wrap", "Rondgaan in de lijst", "Na het laatste kanaal weer naar het eerste.", true)
@@ -139,7 +141,7 @@ object Settings {
     val sections = listOf(
         Section("Weergave", "Grootte, animaties en wat je ziet", listOf(uiScale, animations, showClock, showNumbers, showEpgInLists, showLogos, showRatings, tabOnFocus)),
         Section("Startscherm", "Wat er op Start staat", listOf(showContinue, showRecordings, showStats, startup)),
-        Section("Speler", "Bediening tijdens het kijken", listOf(okLive, zapDirection, zapWrap, infoTime, resize, seekBack, seekForward, autoNext, resumeMode, playerClock, techInfo)),
+        Section("Speler", "Bediening tijdens het kijken", listOf(okLive, matchTable, zapDirection, zapWrap, infoTime, resize, seekBack, seekForward, autoNext, resumeMode, playerClock, techInfo)),
         Section("Geluid en ondertitels", "Talen en leesbaarheid", listOf(audioLang, subLang, subSize, subBackground)),
         Section("Buffer en decoder", "Sneller zappen of minder haperen", listOf(startBuffer, maxBuffer, rebuffer, retries, hlsFallback, decoderFallback, tunneling, tsCompat, softwareAudio)),
         Section("Netwerk", "Verbinding met je provider", listOf(userAgent, timeout, catalogRefresh)),

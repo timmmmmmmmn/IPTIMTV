@@ -95,6 +95,75 @@ object Sport {
         }
     }
 
+    // Wedstrijden van vandaag kort onthouden (de speler vraagt ze vaak op).
+    private var todayCache: Pair<Long, List<Match>>? = null
+    suspend fun todayCached(): List<Match> {
+        todayCache?.let { (at, list) -> if (System.currentTimeMillis() - at < 5 * 60_000) return list }
+        return today().also { if (it.isNotEmpty()) todayCache = System.currentTimeMillis() to it }
+    }
+
+    /**
+     * Welke wedstrijd is er nu op dit kanaal? Kijkt naar de kanaalnaam en het programma in de gids
+     * en vergelijkt die met de wedstrijden die rond nu bezig zijn of zo beginnen.
+     * Geeft de competitie terug, en de wedstrijd als die te herkennen is.
+     */
+    fun matchOn(channelName: String, program: Program?, matches: List<Match>): Pair<League, Match?>? {
+        val now = System.currentTimeMillis()
+        val text = plain(channelName + " " + (program?.title ?: "") + " " + (program?.description ?: ""))
+        val near = matches.filter { now in (it.start - 30 * 60_000)..(it.start + 150 * 60_000) }
+        var best: Match? = null
+        var bestScore = 0
+        for (m in near) {
+            val h = words(names(m.home)).containsMatchIn(text)
+            val a = words(names(m.away)).containsMatchIn(text)
+            val score = (if (h) 2 else 0) + (if (a) 2 else 0) + (if (words(m.league.words).containsMatchIn(text)) 1 else 0)
+            if ((h || a) && score > bestScore) { best = m; bestScore = score }
+        }
+        best?.let { return it.league to it }
+        // Geen club te zien, wel de competitie ("Premier League Live"): dan alleen de stand van die competitie.
+        val league = near.map { it.league }.distinct().firstOrNull { words(it.words).containsMatchIn(text) }
+            ?: leagues.firstOrNull { program != null && words(it.words).containsMatchIn(plain(program.title)) }
+        return league?.let { it to null }
+    }
+
+    class Row(val rank: Int, val team: String, val logo: String?, val played: Int, val won: Int, val drawn: Int, val lost: Int, val diff: String, val points: Int)
+    /** Een stand; bij competities met poules meerdere [groups]. */
+    class Table(val groups: List<Pair<String, List<Row>>>)
+
+    private val tableCache = HashMap<String, Pair<Long, Table>>()
+
+    /** De stand van een competitie (ESPN). Leeg bij bekertoernooien zonder stand. */
+    suspend fun standings(league: League): Table = withContext(Dispatchers.IO) {
+        tableCache[league.id]?.let { (at, t) -> if (System.currentTimeMillis() - at < 10 * 60_000) return@withContext t }
+        val table = runCatching {
+            val o = JSONObject(Net.get("https://site.api.espn.com/apis/v2/sports/soccer/${league.id}/standings"))
+            val children = o.optJSONArray("children") ?: return@runCatching Table(emptyList())
+            Table(List(children.length()) { g ->
+                val child = children.getJSONObject(g)
+                val entries = child.optJSONObject("standings")?.optJSONArray("entries")
+                val rows = if (entries == null) emptyList() else List(entries.length()) { i ->
+                    val e = entries.getJSONObject(i)
+                    val stats = e.optJSONArray("stats")
+                    val st = HashMap<String, String>()
+                    if (stats != null) for (k in 0 until stats.length()) stats.getJSONObject(k).let { st[it.optString("name")] = it.optString("displayValue") }
+                    val t = e.getJSONObject("team")
+                    val logo = t.optJSONArray("logos")?.optJSONObject(0)?.optString("href")
+                    Row(st["rank"]?.toIntOrNull() ?: (i + 1), t.optString("shortDisplayName").ifBlank { t.optString("displayName") }, logo,
+                        st["gamesPlayed"]?.toIntOrNull() ?: 0, st["wins"]?.toIntOrNull() ?: 0, st["ties"]?.toIntOrNull() ?: 0,
+                        st["losses"]?.toIntOrNull() ?: 0, st["pointDifferential"] ?: "0", st["points"]?.toIntOrNull() ?: 0)
+                }.sortedBy { it.rank }
+                child.optString("name") to rows
+            }.filter { it.second.isNotEmpty() })
+        }.getOrDefault(Table(emptyList()))
+        if (table.groups.isNotEmpty()) tableCache[league.id] = System.currentTimeMillis() to table
+        table
+    }
+
+    /** Hoort deze regel uit de stand bij een van de clubs van de wedstrijd? */
+    fun isTeam(row: Row, m: Match?) = m != null && listOf(m.home, m.away).any { t ->
+        plain(row.team) == plain(t.short) || plain(row.team) == plain(t.name) || words(names(t)).containsMatchIn(plain(row.team))
+    }
+
     private fun plain(s: String) = Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("\\p{M}"), "").lowercase()
 
     private val noise = setOf("fc", "afc", "sc", "cf", "sv", "as", "ss", "ac", "fk", "sk", "bv", "vv", "cd", "rc", "rcd", "ud", "sd", "1.", "calcio", "club", "de")
