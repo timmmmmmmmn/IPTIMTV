@@ -19,6 +19,12 @@ const P = {
   star: 'M12,17.27L18.18,21l-1.64,-7.03L22,9.24l-7.19,-0.61L12,2 9.19,8.63 2,9.24l5.46,4.73L5.82,21z',
   prev: 'M6,6h2v12H6zM9.5,12l8.5,6V6z',
   next: 'M6,18l8.5,-6L6,6v12zM16,6v12h2V6h-2z',
+  cast: 'M21,3L3,3c-1.1,0 -2,0.9 -2,2v3h2L3,5h18v14h-7v2h7c1.1,0 2,-0.9 2,-2L23,5c0,-1.1 -0.9,-2 -2,-2zM1,18v3h3c0,-1.66 -1.34,-3 -3,-3zM1,14v2c2.76,0 5,2.24 5,5h2c0,-3.87 -3.13,-7 -7,-7zM1,10v2c4.97,0 9,4.03 9,9h2c0,-6.08 -4.93,-11 -11,-11z',
+  airplay: 'M6,22h12l-6,-6zM21,3H3c-1.1,0 -2,0.9 -2,2v12c0,1.1 0.9,2 2,2h4v-2H3V5h18v12h-4v2h4c1.1,0 2,-0.9 2,-2V5c0,-1.1 -0.9,-2 -2,-2z',
+  sound: 'M3,9v6h4l5,5V4L7,9H3zM16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v8.05c1.48,-0.73 2.5,-2.25 2.5,-4.02zM14,3.23v2.06c2.89,0.86 5,3.54 5,6.71s-2.11,5.85 -5,6.71v2.06c4.01,-0.91 7,-4.49 7,-8.77s-2.99,-7.86 -7,-8.77z',
+  mute: 'M16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v2.21l2.45,2.45c0.03,-0.2 0.05,-0.41 0.05,-0.63zM19,12c0,0.94 -0.2,1.82 -0.54,2.64l1.51,1.51C20.63,14.91 21,13.5 21,12c0,-4.28 -2.99,-7.86 -7,-8.77v2.06c2.89,0.86 5,3.54 5,6.71zM4.27,3L3,4.27 7.73,9L3,9v6h4l5,5v-6.73l4.25,4.25c-0.67,0.52 -1.42,0.93 -2.25,1.18v2.06c1.38,-0.31 2.63,-0.95 3.69,-1.81L19.73,21 21,19.73l-9,-9L4.27,3zM12,4L9.91,6.09 12,8.18L12,4z',
+  headphones: 'M12,1c-4.97,0 -9,4.03 -9,9v7c0,1.66 1.34,3 3,3h3v-8H5v-2c0,-3.87 3.13,-7 7,-7s7,3.13 7,7v2h-4v8h3c1.66,0 3,-1.34 3,-3v-7c0,-4.97 -4.03,-9 -9,-9z',
+  account: 'M12,12c2.21,0 4,-1.79 4,-4s-1.79,-4 -4,-4 -4,1.79 -4,4 1.79,4 4,4zM12,14c-2.67,0 -8,1.34 -8,4v2h16v-2c0,-2.66 -5.33,-4 -8,-4z',
 };
 const ic = (n) => `<svg class="i" viewBox="0 0 24 24"><path d="${P[n]}"/></svg>`;
 
@@ -326,14 +332,22 @@ const tabs = [['home', 'Start', 'home'], ['live', 'Live TV', 'tv'], ['sport', 'S
 function render() {
   if (!S.token) return renderWelcome();
   if (!S.profiles.length) return renderAddLogin(true);
+  const hour = new Date().getHours();
+  const titles = { home: hour < 6 ? 'Goedenacht' : hour < 12 ? 'Goedemorgen' : hour < 18 ? 'Goedemiddag' : 'Goedenavond',
+    live: 'Live TV', sport: 'Sport', movies: 'Films & series', series: 'Films & series', search: 'Zoeken', settings: 'Instellingen' };
+  const mobileTabs = [['home', 'Start', 'home'], ['live', 'Live TV', 'tv'], ['sport', 'Sport', 'ball'], ['movies', 'Films', 'movie'], ['search', 'Zoeken', 'search']];
+  const scrollY = S.lastTab === S.tab ? window.scrollY : 0;
+  S.lastTab = S.tab;
   app.innerHTML = `
     <header class="top">
       <img class="logo" src="/logo.png" alt="IPTIMTV">
+      <h1 class="ptitle">${esc(titles[S.tab] || '')}</h1>
       <nav class="tabs">${tabs.map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}</nav>
-      <button class="icon-btn ${S.tab === 'settings' ? 'on' : ''}" data-tab="settings" aria-label="Instellingen">${ic('gear')}</button>
+      <button class="icon-btn ${S.tab === 'settings' ? 'on' : ''}" data-tab="settings" aria-label="Instellingen">${ic('account')}</button>
     </header>
     <main>${S.loading && !S.cat ? `<div class="empty"><b>${esc(S.loading)}</b>Even geduld…</div>` : view()}</main>
-    <nav class="navbar">${tabs.map(([k, l, i]) => `<button class="${S.tab === k ? 'on' : ''}" data-tab="${k}">${ic(i)}${l === 'Live TV' ? 'Live' : l}</button>`).join('')}</nav>`;
+    <nav class="navbar">${mobileTabs.map(([k, l, i]) => `<button class="${S.tab === k || (k === 'movies' && S.tab === 'series') ? 'on' : ''}" data-tab="${k}">${ic(i)}<span>${l}</span></button>`).join('')}</nav>`;
+  if (scrollY) window.scrollTo(0, scrollY);
   app.querySelectorAll('[data-epg]').forEach((el) => observer.observe(el));
 }
 
@@ -413,12 +427,14 @@ function viewVod(kind) {
   const movies = kind === 'movies';
   const cats = movies ? S.cat.movieCats : S.cat.showCats;
   const items = movies ? S.cat.movies : S.cat.shows;
-  if (!items.length) return `<div class="empty"><b>${S.vodLoading ? (movies ? 'Films' : 'Series') + ' laden…' : 'Geen ' + (movies ? 'films' : 'series')}</b></div>`;
+  const seg = `<div class="segment only-mobile"><button class="${movies ? 'on' : ''}" data-tab="movies">Films</button><button class="${movies ? '' : 'on'}" data-tab="series">Series</button></div>`;
+  if (!items.length) return seg + `<div class="empty"><b>${S.vodLoading ? (movies ? 'Films' : 'Series') + ' laden…' : 'Geen ' + (movies ? 'films' : 'series')}</b></div>`;
   const all = [{ id: '__new', name: 'Nieuw toegevoegd' }, ...cats];
   const curId = (movies ? S.movieCat : S.showCat) || '__new';
   const list = curId === '__new' ? [...items].sort((a, b) => (b.added || 0) - (a.added || 0)).slice(0, 120) : items.filter((m) => m.cat === curId);
   const attr = movies ? 'data-moviecat' : 'data-showcat';
   return `
+    ${seg}
     <div class="chips only-mobile">${all.map((c) => `<button class="chip ${c.id === curId ? 'on' : ''}" ${attr}="${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>
     <div class="split">
       <div class="cats">${all.map((c) => `<button class="${c.id === curId ? 'on' : ''}" ${attr}="${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>
@@ -694,7 +710,7 @@ function closeSheet() { $('.sheet')?.remove(); }
 function openMovie(m) {
   const key = 'movie:' + m.url.split('/').pop();
   const h = S.history.find((x) => x.key === key && x.position > 60e3);
-  sheet(`<div class="detail"><div class="cover" style="background-image:url('${esc(m.poster || '')}')"></div><div>
+  sheet(`<div class="backdrop" style="background-image:url('${esc(m.poster || '')}')"></div><div class="detail"><div class="cover" style="background-image:url('${esc(m.poster || '')}')"></div><div>
     <h1>${esc(m.name)}</h1>${m.rating && m.rating !== '0' ? `<p>★ ${esc(m.rating)}</p>` : ''}<p class="dim" id="plot"></p>
     <div class="btns">${h ? `<button class="btn primary" data-act="movie-resume">${ic('play')} Verder kijken (${fmt(h.position / 1000)})</button><button class="btn" data-act="movie-start">Vanaf het begin</button>`
       : `<button class="btn primary" data-act="movie-start">${ic('play')} Afspelen</button>`}</div></div></div>`);
@@ -706,7 +722,7 @@ function openMovie(m) {
 }
 
 async function openShow(s) {
-  sheet(`<div class="detail"><div class="cover" style="background-image:url('${esc(s.poster || '')}')"></div><div style="flex:1;min-width:0">
+  sheet(`<div class="backdrop" style="background-image:url('${esc(s.poster || '')}')"></div><div class="detail"><div class="cover" style="background-image:url('${esc(s.poster || '')}')"></div><div style="flex:1;min-width:0">
     <h1>${esc(s.name)}</h1><p class="dim">${esc(s.plot || '')}</p><div id="eps" class="dim">Afleveringen laden…</div></div></div>`);
   const p = active();
   try {
@@ -749,6 +765,108 @@ async function openShow(s) {
   } catch { $('#eps').textContent = 'Kon de afleveringen niet laden.'; }
 }
 
+// ---------- casten naar Chromecast ----------
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const CAN_CAST = !IOS && /Chrome|CriOS|Edg/.test(navigator.userAgent);
+const HTTPS_HOME = 'https://' + location.hostname + '/';
+let castReady = null;
+/** De Cast-bibliotheek van Google (alleen in Chrome, alleen op https). */
+function loadCastSdk() {
+  if (!CAN_CAST || !window.isSecureContext) return Promise.resolve(false);
+  return (castReady ||= new Promise((ok) => {
+    window.__onGCastApiAvailable = (available) => {
+      if (!available) return ok(false);
+      cast.framework.CastContext.getInstance().setOptions({
+        receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+        autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+      });
+      ok(true);
+    };
+    const sc = document.createElement('script');
+    sc.src = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
+    sc.onerror = () => ok(false);
+    document.head.append(sc);
+  }));
+}
+/** Het adres dat de Chromecast zelf ophaalt: HLS voor live, via de server als die bij je provider kan. */
+function castUrl(url, live) {
+  const u = live ? url.replace(/(\/live\/.+)\.ts$/, '$1.m3u8') : url;
+  return isDirect(active()) ? u : HTTPS_HOME.slice(0, -1) + px(u);
+}
+const Cast = { items: [], i: 0, live: false };
+async function castLoad(it, startMs = 0) {
+  const session = cast.framework.CastContext.getInstance().getCurrentSession();
+  if (!session) return;
+  const mime = /\.m3u8/.test(it.url) ? 'application/x-mpegURL' : /\.mkv/.test(it.url) ? 'video/x-matroska' : 'video/mp4';
+  const info = new chrome.cast.media.MediaInfo(it.url, mime);
+  info.streamType = Cast.live ? chrome.cast.media.StreamType.LIVE : chrome.cast.media.StreamType.BUFFERED;
+  info.metadata = new chrome.cast.media.GenericMediaMetadata();
+  info.metadata.title = it.title;
+  info.metadata.subtitle = it.subtitle || '';
+  if (it.image) info.metadata.images = [new chrome.cast.Image(it.image)];
+  const req = new chrome.cast.media.LoadRequest(info);
+  req.currentTime = startMs / 1000;
+  await session.loadMedia(req);
+  renderCastBar();
+}
+/** Casten starten (moet vanuit een tik gebeuren: Chrome vraagt dan welke tv). */
+async function castStart(startMs) {
+  const ctx = cast.framework.CastContext.getInstance();
+  try {
+    if (!ctx.getCurrentSession()) await ctx.requestSession();
+    await castLoad(Cast.items[Cast.i], startMs);
+    $('.player')?._close();
+  } catch (e) {
+    if (e !== 'cancel') toast('Casten lukte niet');
+  }
+}
+function castItems(items, i, live, startMs) {
+  if (!CAN_CAST) return toast(IOS ? 'Gebruik AirPlay op de iPhone' : 'Casten kan in Chrome');
+  Object.assign(Cast, { items: items.map(({ title, subtitle, url, image }) => ({ title, subtitle, url, image })), i, live });
+  if (!window.isSecureContext) {
+    // Op de http-versie kan Chrome niet casten: even via de https-pagina (die stuurt alleen het adres door).
+    const data = btoa(unescape(encodeURIComponent(JSON.stringify({ ...Cast, startMs, back: location.href.split('#')[0] }))));
+    location.href = HTTPS_HOME + '#cast=' + data;
+    return;
+  }
+  loadCastSdk().then((ok) => (ok ? castStart(startMs) : toast('Casten is niet beschikbaar in deze browser')));
+}
+function renderCastBar() {
+  let bar = $('.castbar');
+  const session = window.cast?.framework?.CastContext.getInstance().getCurrentSession();
+  if (!session) return bar?.remove();
+  if (!bar) { bar = document.createElement('div'); bar.className = 'castbar'; document.body.append(bar); }
+  const it = Cast.items[Cast.i] || {};
+  bar.innerHTML = `${ic('cast')}<div class="txt"><b>${esc(it.title || 'Verbonden')}</b><span>Op ${esc(session.getCastDevice().friendlyName)}</span></div>
+    ${Cast.live && Cast.items.length > 1 ? `<button data-cast="prev">${ic('prev')}</button><button data-cast="next">${ic('next')}</button>` : ''}
+    <button data-cast="pause">${ic('play')}</button><button data-cast="stop" aria-label="Stoppen">✕</button>`;
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-cast]');
+  if (!b) return;
+  const session = cast.framework.CastContext.getInstance().getCurrentSession();
+  if (b.dataset.cast === 'stop') { session?.endSession(true); $('.castbar')?.remove(); return; }
+  if (b.dataset.cast === 'pause') { const m = session?.getMediaSession(); if (m) (m.playerState === 'PAUSED' ? m.play() : m.pause()); return; }
+  Cast.i = (Cast.i + (b.dataset.cast === 'next' ? 1 : -1) + Cast.items.length) % Cast.items.length;
+  castLoad(Cast.items[Cast.i]);
+});
+
+/** De https-pagina die alleen dient om vanaf de http-versie te casten. */
+function renderCastLanding(d) {
+  Object.assign(Cast, { items: d.items, i: d.i, live: d.live });
+  const it = d.items[d.i];
+  app.innerHTML = `<div class="welcome"><img class="logo" src="/logo.png" alt="IPTIMTV">
+    <div class="card" style="text-align:center"><h2 style="justify-content:center;margin:0 0 6px">Casten naar je tv</h2>
+    <p>${esc(it.title)}</p><div class="btns" style="justify-content:center">
+    <button class="btn primary" id="castgo">${ic('cast')} Kies je tv</button>
+    <a class="btn" href="${esc(d.back)}">Terug</a></div>
+    <p class="dim" style="font-size:13px">Je computer en de Chromecast moeten op hetzelfde wifi-netwerk zitten.</p></div></div>`;
+  loadCastSdk();
+  $('#castgo').onclick = () => loadCastSdk().then((ok) => (ok ? castStart(d.startMs).then(() => {
+    if (cast.framework.CastContext.getInstance().getCurrentSession()) $('.card p').textContent = 'Speelt nu op je tv. Bedienen kan met de balk onderin.';
+  }) : toast('Casten is niet beschikbaar in deze browser')));
+}
+
 // ---------- speler ----------
 let hls = null, mts = null;
 let mpegtsPromise = null;
@@ -787,8 +905,14 @@ function play(items, index, live, startAt = 0) {
       <button class="icon-btn" data-act="pclose" aria-label="Stoppen">${ic('back')}</button>
       <div class="txt"><b></b><span></span></div>
       ${live ? `<button class="icon-btn" data-act="pprev" aria-label="Vorig kanaal">${ic('prev')}</button><button class="icon-btn" data-act="pnext" aria-label="Volgend kanaal">${ic('next')}</button>` : ''}
+      <button class="icon-btn hidden" data-act="pairplay" aria-label="AirPlay">${ic('airplay')}</button>
+      ${CAN_CAST ? `<button class="icon-btn" data-act="pcast" aria-label="Casten naar tv">${ic('cast')}</button>` : ''}
+      <button class="icon-btn" data-act="paudio" aria-label="Alleen geluid">${ic('headphones')}</button>
+      <button class="icon-btn" data-act="pmute" aria-label="Dempen">${ic('sound')}</button>
     </div>
-    <video playsinline controls autoplay></video><div class="msg hidden"></div>`;
+    <video playsinline controls autoplay x-webkit-airplay="allow"></video>
+    <div class="audio-only hidden">${ic('headphones')}<b></b><span>Alleen geluid · speelt door met je scherm op slot</span></div>
+    <div class="msg hidden"></div>`;
   document.body.append(el);
   history.pushState({ player: 1 }, '');
   const video = $('video', el);
@@ -898,6 +1022,7 @@ function play(items, index, live, startAt = 0) {
 
   const close = () => {
     flush();
+    el._audioOff?.();
     clearInterval(timer);
     stopEngines();
     video.pause(); video.load();
@@ -906,6 +1031,50 @@ function play(items, index, live, startAt = 0) {
   };
   const go = (d) => { flush(); i = (i + d + items.length) % items.length; load(); };
   $('[data-act="pclose"]', el).onclick = () => history.back();
+
+  // Dempen
+  const muteBtn = $('[data-act="pmute"]', el);
+  muteBtn.onclick = () => { video.muted = !video.muted; muteBtn.innerHTML = ic(video.muted ? 'mute' : 'sound'); muteBtn.classList.toggle('on', video.muted); };
+
+  // AirPlay (Safari op iPhone en Mac)
+  if (window.WebKitPlaybackTargetAvailabilityEvent) {
+    const ap = $('[data-act="pairplay"]', el);
+    video.addEventListener('webkitplaybacktargetavailabilitychanged', (e) => ap.classList.toggle('hidden', e.availability !== 'available'));
+    ap.onclick = () => video.webkitShowPlaybackTargetPicker();
+  }
+
+  // Casten naar Chromecast: de tv haalt de stream zelf op.
+  $('[data-act="pcast"]', el)?.addEventListener('click', () => {
+    const it = items[i];
+    castItems(items.map((x) => ({ ...x, url: castUrl(x.url, live) })), i, live, live ? 0 : video.currentTime * 1000);
+    flush();
+  });
+
+  // Alleen geluid: op de iPhone een audio-element (speelt door met het scherm op slot), elders beeld verbergen.
+  const audioBtn = $('[data-act="paudio"]', el);
+  let audioEl = null;
+  const setAudioOnly = (on) => {
+    el.classList.toggle('audio-mode', on);
+    audioBtn.classList.toggle('on', on);
+    $('.audio-only', el).classList.toggle('hidden', !on);
+    $('.audio-only b', el).textContent = items[i].title;
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (ios && on && video.currentSrc && !video.currentSrc.startsWith('blob:')) {
+      audioEl = new Audio(video.currentSrc);
+      audioEl.currentTime = video.currentTime;
+      video.pause();
+      audioEl.play().catch(() => {});
+    } else if (!on && audioEl) {
+      video.currentTime = audioEl.currentTime || video.currentTime;
+      audioEl.pause(); audioEl.src = ''; audioEl = null;
+      video.play().catch(() => {});
+    }
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: items[i].title, artist: 'IPTIMTV', artwork: items[i].image ? [{ src: items[i].image }] : [] });
+    }
+  };
+  audioBtn.onclick = () => setAudioOnly(!el.classList.contains('audio-mode'));
+  el._audioOff = () => { if (audioEl) { audioEl.pause(); audioEl.src = ''; audioEl = null; } };
   $('[data-act="pprev"]', el)?.addEventListener('click', () => go(-1));
   $('[data-act="pnext"]', el)?.addEventListener('click', () => go(1));
   el._close = close;
@@ -1029,6 +1198,11 @@ function logout() {
 }
 
 async function boot() {
+  if (location.hash.startsWith('#cast=')) {
+    try { return renderCastLanding(JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(6)))))); } catch { /* ongeldig */ }
+  }
+  if (CAN_CAST && window.isSecureContext) loadCastSdk().then((ok) => ok && cast.framework.CastContext.getInstance().addEventListener(
+    cast.framework.CastContextEventType.SESSION_STATE_CHANGED, renderCastBar));
   if (location.hash.startsWith('#t=')) {
     try {
       const d = JSON.parse(atob(location.hash.slice(3)));

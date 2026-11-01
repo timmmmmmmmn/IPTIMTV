@@ -1,5 +1,5 @@
 // Service worker: de app zelf snel en installeerbaar; streams en API gaan altijd over het netwerk.
-const SHELL = 'iptimtv-shell-v2';
+const SHELL = 'iptimtv-shell-v3';
 const FILES = ['/', '/style.css', '/app.js', '/logo.png', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
