@@ -77,6 +77,7 @@ object Settings {
     val autoNext = toggle("auto_next", "Volgende aflevering", "Na een aflevering meteen de volgende afspelen.", true)
     val resumeMode = pick("resume", "Films verder kijken", "Wat er gebeurt als je een half bekeken film opent.", "ask",
         "ask" to "Vragen", "auto" to "Meteen verder", "start" to "Altijd vanaf begin")
+    val techInfo = toggle("tech_info", "Technische info tijdens kijken", "Toont beeld- en geluidsformaat, buffer en overgeslagen frames. Handig bij problemen.", false)
     val playerClock = toggle("player_clock", "Klok tijdens kijken", "De tijd in de info-balk.", true)
 
     // ---------- Geluid en ondertitels ----------
@@ -89,8 +90,8 @@ object Settings {
     val subBackground = toggle("sub_bg", "Ondertitels met achtergrond", "Zwart vlak achter de tekst, beter leesbaar.", true)
 
     // ---------- Buffer en decoder ----------
-    val startBuffer = pick("start_buffer", "Beginnen na", "Hoeveel beeld er binnen moet zijn voor het begint. Korter = sneller zappen.", "1000",
-        "500" to "0,5 sec (snelst)", "1000" to "1 sec", "2500" to "2,5 sec", "5000" to "5 sec (stabielst)")
+    val startBuffer = pick("start_buffer", "Beginnen na", "Hoeveel beeld er binnen moet zijn voor het begint. Korter = sneller zappen.", "1500",
+        "500" to "0,5 sec (snelst)", "1000" to "1 sec", "1500" to "1,5 sec", "2500" to "2,5 sec", "5000" to "5 sec (stabielst)")
     val maxBuffer = pick("max_buffer", "Buffer maximaal", "Hoeveel er vooruit geladen wordt. Meer = minder haperen.", "50000",
         "15000" to "15 sec", "30000" to "30 sec", "50000" to "50 sec", "120000" to "2 minuten")
     val rebuffer = pick("rebuffer", "Na haperen verder na", "Hoeveel er binnen moet zijn voor het na een hapering verdergaat.", "2500",
@@ -100,6 +101,7 @@ object Settings {
     val hlsFallback = toggle("hls_fallback", "Automatisch HLS proberen", "Als een kanaal niet wil, het andere formaat proberen.", true)
     val decoderFallback = toggle("decoder_fallback", "Andere decoder bij fouten", "Probeert een andere video-decoder als de eerste het niet kan.", true)
     val tunneling = toggle("tunneling", "Getunneld afspelen", "Beter beeld/geluid-synchroon op sommige tv's. Uitzetten als het beeld zwart blijft.", false)
+    val tsCompat = toggle("ts_compat", "Compatibele TS-modus", "Alleen aanzetten als een zender helemaal geen beeld geeft. Kan bij gewone zenders juist haperen.", false)
     val softwareAudio = toggle("sw_audio", "Geluid zelf omzetten", "Aan als je soundbar geen Dolby snapt; dan wordt het stereo.", false)
 
     // ---------- Netwerk ----------
@@ -137,9 +139,9 @@ object Settings {
     val sections = listOf(
         Section("Weergave", "Grootte, animaties en wat je ziet", listOf(uiScale, animations, showClock, showNumbers, showEpgInLists, showLogos, showRatings, tabOnFocus)),
         Section("Startscherm", "Wat er op Start staat", listOf(showContinue, showRecordings, showStats, startup)),
-        Section("Speler", "Bediening tijdens het kijken", listOf(okLive, zapDirection, zapWrap, infoTime, resize, seekBack, seekForward, autoNext, resumeMode, playerClock)),
+        Section("Speler", "Bediening tijdens het kijken", listOf(okLive, zapDirection, zapWrap, infoTime, resize, seekBack, seekForward, autoNext, resumeMode, playerClock, techInfo)),
         Section("Geluid en ondertitels", "Talen en leesbaarheid", listOf(audioLang, subLang, subSize, subBackground)),
-        Section("Buffer en decoder", "Sneller zappen of minder haperen", listOf(startBuffer, maxBuffer, rebuffer, retries, hlsFallback, decoderFallback, tunneling, softwareAudio)),
+        Section("Buffer en decoder", "Sneller zappen of minder haperen", listOf(startBuffer, maxBuffer, rebuffer, retries, hlsFallback, decoderFallback, tunneling, tsCompat, softwareAudio)),
         Section("Netwerk", "Verbinding met je provider", listOf(userAgent, timeout, catalogRefresh)),
         Section("Gids en terugkijken", "Programmagids en tijden", listOf(epgRefresh, epgAhead, epgBack, epgShift, catchupShift)),
         Section("Opnemen", "Hoe opnames worden gemaakt", listOf(recordPre, recordPost, recordDefault)),

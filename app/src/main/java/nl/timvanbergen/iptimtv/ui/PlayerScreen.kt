@@ -21,6 +21,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +33,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -107,9 +113,12 @@ import nl.timvanbergen.iptimtv.data.Xtream
 @OptIn(UnstableApi::class)
 private fun buildPlayer(context: Context): ExoPlayer {
     val http = OkHttpDataSource.Factory(Net.client)
-    val extractors = DefaultExtractorsFactory().setTsExtractorFlags(
-        DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS,
-    )
+    // Standaard de gewone TS-verwerking; de "compatibele" modus alleen voor rare streams zonder sleutelframes.
+    val extractors = DefaultExtractorsFactory().apply {
+        if (Settings.tsCompat.on) setTsExtractorFlags(
+            DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS,
+        )
+    }
     val start = Settings.startBuffer.int
     val rebuffer = Settings.rebuffer.int
     val max = Settings.maxBuffer.int
@@ -123,7 +132,15 @@ private fun buildPlayer(context: Context): ExoPlayer {
                 @Suppress("DEPRECATION")
                 DefaultAudioSink.Builder(context).setAudioCapabilities(AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES).build()
             } else super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
-    }.setEnableDecoderFallback(Settings.decoderFallback.on)
+    }.setEnableDecoderFallback(Settings.decoderFallback.on).apply {
+        // Alleen in de emulator: de nagebootste hardware-decoder werkt daar niet, de software-decoder wel.
+        if (android.os.Build.FINGERPRINT.contains("generic") || android.os.Build.HARDWARE.contains("ranchu")) {
+            setMediaCodecSelector { mime, secure, tunneling ->
+                androidx.media3.exoplayer.mediacodec.MediaCodecUtil.getDecoderInfos(mime, secure, tunneling)
+                    .sortedBy { if (it.name.startsWith("c2.android")) 0 else 1 }
+            }
+        }
+    }
 
     val selector = DefaultTrackSelector(context).apply {
         setParameters(
@@ -197,6 +214,13 @@ fun PlayerScreen(pb: Playback) {
     var menuTick by remember { mutableIntStateOf(0) }
     var toast by remember { mutableStateOf<String?>(null) }
     var okLong by remember { mutableStateOf(false) }
+    // Telefoon: bediening zichtbaar, en welke keuzelijst (geluid/ondertitels/opnemen) open is.
+    var controls by remember { mutableStateOf(true) }
+    var controlsTick by remember { mutableIntStateOf(0) }
+    var sheet by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(controls, controlsTick, playing, sheet) {
+        if (controls && playing && sheet == null) { delay(4000); controls = false }
+    }
 
     // Op de telefoon: liggend kijken.
     if (Mobile) DisposableEffect(Unit) {
@@ -308,11 +332,45 @@ fun PlayerScreen(pb: Playback) {
         error = null
         retries = 0
         triedHls = false
+        showOverlay()
+        if (player.playbackState != Player.STATE_IDLE) {
+            // Oude stream eerst helemaal dicht (verbinding én decoder): veel providers staan maar één
+            // verbinding tegelijk toe, en sommige tv-chips bevriezen als de decoder hergebruikt wordt.
+            player.stop()
+            player.clearMediaItems()
+            delay(if (pb.live) 250 else 50)
+        }
         player.setMediaItem(mediaItem(items[index].url))
         player.prepare()
         if (index == pb.index && pb.startAt > 0) player.seekTo(pb.startAt)
         player.playWhenReady = true
-        showOverlay()
+    }
+
+    // Waakhond voor live tv: staat het beeld te lang stil, dan zelf opnieuw verbinden.
+    var reconnects by remember { mutableIntStateOf(0) }
+    LaunchedEffect(index, reconnects) {
+        if (!pb.live) return@LaunchedEffect
+        delay(8000) // eerst rustig laten opstarten
+        var last = -1L
+        var stuck = 0
+        while (true) {
+            delay(1000)
+            val pos = player.currentPosition
+            val waiting = player.playWhenReady && error == null &&
+                (player.playbackState == Player.STATE_BUFFERING || (player.playbackState == Player.STATE_READY && pos == last))
+            last = pos
+            stuck = if (waiting) stuck + 1 else 0
+            if (stuck >= 5) {
+                say("Verbinding opnieuw opgezet")
+                player.stop()
+                delay(300)
+                player.setMediaItem(mediaItem(items[index].url))
+                player.prepare()
+                player.playWhenReady = true
+                reconnects++
+                return@LaunchedEffect
+            }
+        }
     }
 
     LaunchedEffect(overlayTick) {
@@ -464,6 +522,23 @@ fun PlayerScreen(pb: Playback) {
     fun openMenu() {
         menuPage = "main"; menuIndex = 0; menu = true; panel = false; menuTick++
     }
+    val restartEntry = entries.firstOrNull { it.icon == Ic.Restart && pb.live }
+
+    /** Opname-keuzes (voor het telefoonmenu). */
+    fun recordOptions(): List<Pair<String, () -> Unit>> {
+        val ch = channel ?: return emptyList()
+        val now = System.currentTimeMillis()
+        return buildList {
+            if (nowProgram != null) add("Tot einde programma (${clock(nowProgram.stop)})" to {
+                Recordings.schedule(nowProgram.title, ch, now, nowProgram.stop + Settings.recordPost.int * 60_000L); say("Opname gestart")
+            })
+            listOf(30, 60, 120).forEach { m ->
+                add((if (m < 60) "$m minuten" else "${m / 60} uur") to {
+                    Recordings.schedule(nowProgram?.title ?: ch.name, ch, now, now + m * 60_000L); say("Opname gestart")
+                })
+            }
+        }
+    }
 
     // ---------- afstandsbediening ----------
     val keys = rememberUpdatedState { e: KeyEvent ->
@@ -542,6 +617,7 @@ fun PlayerScreen(pb: Playback) {
     // Terug komt op nieuwe Android-versies niet als toets binnen, maar via de back-dispatcher.
     BackHandler {
         when {
+            sheet != null -> sheet = null
             menu && menuPage != "main" -> { menuPage = "main"; menuIndex = 0 }
             menu -> { menu = false; if (!pb.live && !player.isPlaying) player.play() }
             panel -> panel = false
@@ -560,7 +636,13 @@ fun PlayerScreen(pb: Playback) {
             .background(Color.Black)
             .pointerInput(Unit) {
                 detectTapGestures(onTap = {
-                    if (panel) panel = false else if (menu) menu = false else { openMenu(); showOverlay() }
+                    when {
+                        panel -> panel = false
+                        Mobile && sheet != null -> sheet = null
+                        Mobile -> { controls = !controls; controlsTick++ }
+                        menu -> menu = false
+                        else -> { openMenu(); showOverlay() }
+                    }
                 })
             },
     ) {
@@ -615,8 +697,54 @@ fun PlayerScreen(pb: Playback) {
             }
         }
 
+        if (Mobile) {
+            MobileControls(
+                visible = controls && !panel && sheet == null,
+                item = item, number = index + 1, live = pb.live, playing = playing, position = position, length = length,
+                recording = recording != null, canRestart = restartEntry != null,
+                onClose = { close() },
+                onChannels = { controls = false; panelIndex = index; panel = true; panelTick++ },
+                onRecord = { sheet = "record" },
+                onAudio = { sheet = "audio" },
+                onSubs = { sheet = "subs" },
+                onAspect = { resize = resizeModes[(resizeModes.indexOfFirst { it.first == resize } + 1) % resizeModes.size].first; say("Beeld: ${resizeModes.first { it.first == resize }.second}") },
+                onRestart = { restartEntry?.action?.invoke() },
+                onPrev = { if (pb.live) go(index - 1) else seekBy(-Settings.seekBack.int * 1000L) },
+                onNext = { if (pb.live) go(index + 1) else seekBy(Settings.seekForward.int * 1000L) },
+                onPlayPause = { if (player.isPlaying) player.pause() else player.play() },
+                onSeek = { f -> if (length > 0) { player.seekTo((length * f).toLong()); position = (length * f).toLong() } },
+                onTouch = { controlsTick++ },
+            )
+            sheet?.let { which ->
+                val options: List<Triple<String, Boolean, () -> Unit>> = when (which) {
+                    "audio" -> trackChoices(MC.TRACK_TYPE_AUDIO).map { (name, act) -> Triple(name, name == currentTrack(MC.TRACK_TYPE_AUDIO), act) }
+                    "subs" -> {
+                        val off = player.trackSelectionParameters.disabledTrackTypes.contains(MC.TRACK_TYPE_TEXT)
+                        listOf(Triple("Uit", off, {
+                            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(MC.TRACK_TYPE_TEXT, true).build()
+                        })) + trackChoices(MC.TRACK_TYPE_TEXT).map { (name, act) -> Triple(name, !off && name == currentTrack(MC.TRACK_TYPE_TEXT), act) }
+                    }
+                    else -> recordOptions().map { (label, act) -> Triple(label, false, act) }
+                }
+                OptionSheet(
+                    title = when (which) { "audio" -> "Geluid"; "subs" -> "Ondertitels"; else -> if (recording != null) "Opname" else "Opnemen" },
+                    options = if (which == "record" && recording != null) listOf(Triple("Opname stoppen", false) { Recordings.stop(recording); say("Opname gestopt") }) else options,
+                    empty = if (which == "audio") "Er is maar één geluidsspoor" else "Niets te kiezen",
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    onPick = { it(); sheet = null },
+                    onClose = { sheet = null },
+                )
+            }
+        } else {
         AnimatedVisibility((overlay || menu) && !panel, Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
             if (pb.live) LiveInfo(item, index + 1, showClock = !menu) else VodInfo(item, position, length, playing)
+        }
+        AnimatedVisibility(
+            menu,
+            Modifier.align(Alignment.CenterEnd),
+            enter = slideInHorizontally { it } + fadeIn(),
+            exit = slideOutHorizontally { it } + fadeOut(),
+        ) { PauseMenu(if (menuPage == "record") "Opnemen" else if (pb.live) item.title else "Gepauzeerd", entries, menuIndex) }
         }
 
         AnimatedVisibility(
@@ -626,18 +754,192 @@ fun PlayerScreen(pb: Playback) {
             exit = slideOutHorizontally { -it } + fadeOut(),
         ) { ChannelPanel(items, index, panelIndex) { panel = false; if (it != index) go(it) } }
 
-        AnimatedVisibility(
-            menu,
-            Modifier.align(Alignment.CenterEnd),
-            enter = slideInHorizontally { it } + fadeIn(),
-            exit = slideOutHorizontally { it } + fadeOut(),
-        ) { PauseMenu(if (menuPage == "record") "Opnemen" else if (pb.live) item.title else "Gepauzeerd", entries, menuIndex) }
+        if (Settings.techInfo.on) TechInfo(player, Modifier.align(Alignment.TopStart).padding(16.dp))
 
         toast?.let {
             T(it, Modifier.align(Alignment.TopCenter).padding(top = 32.dp).background(C.accentDeep, RoundedCornerShape(20.dp))
                 .padding(horizontal = 20.dp, vertical = 10.dp), size = 17.sp, weight = FontWeight.Bold)
         }
     }
+}
+
+/** Ronde knop met icoon voor de telefoonbediening. */
+@Composable
+private fun RoundButton(icon: ImageVector, size: Int, onClick: () -> Unit, tint: Color = Color.White, bg: Color = Color.Black.copy(alpha = 0.35f)) {
+    Box(
+        Modifier.size(size.dp).clip(CircleShape).background(bg).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, tint, (size * 0.5f).dp) }
+}
+
+/**
+ * Bediening op de telefoon: bovenin terug, titel en snelle instellingen; in het midden grote knoppen;
+ * onderin de tijdbalk (films) of het programma (live).
+ */
+@Composable
+private fun MobileControls(
+    visible: Boolean, item: PlayItem, number: Int, live: Boolean, playing: Boolean, position: Long, length: Long,
+    recording: Boolean, canRestart: Boolean,
+    onClose: () -> Unit, onChannels: () -> Unit, onRecord: () -> Unit, onAudio: () -> Unit, onSubs: () -> Unit,
+    onAspect: () -> Unit, onRestart: () -> Unit, onPrev: () -> Unit, onNext: () -> Unit, onPlayPause: () -> Unit,
+    onSeek: (Float) -> Unit, onTouch: () -> Unit,
+) {
+    AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut()) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
+            // Boven: terug, titel, snelle instellingen
+            Row(
+                Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RoundButton(Icons.Filled.ArrowBack, 44, onClose)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    T(if (live) "$number  ${item.title}" else item.title, size = 18.sp, weight = FontWeight.Bold)
+                    item.subtitle?.let { T(it, size = 13.sp, color = C.dim) }
+                }
+                if (live) {
+                    QuickButton(Icons.Filled.List, "Kanalen") { onTouch(); onChannels() }
+                    if (canRestart) QuickButton(Ic.Restart, "Begin") { onTouch(); onRestart() }
+                    QuickButton(Ic.Record, if (recording) "Opname" else "Opnemen", tint = if (recording) C.live else Color.White) { onTouch(); onRecord() }
+                }
+                QuickButton(Ic.Audio, "Geluid") { onTouch(); onAudio() }
+                QuickButton(Ic.Subtitles, "Ondertitels") { onTouch(); onSubs() }
+                QuickButton(Ic.Aspect, "Beeld") { onTouch(); onAspect() }
+            }
+            // Midden: grote knoppen
+            Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(40.dp), verticalAlignment = Alignment.CenterVertically) {
+                RoundButton(if (live) Ic.SkipPrev else Ic.Rewind, 60, { onTouch(); onPrev() })
+                if (!live) RoundButton(if (playing) Ic.Pause else Icons.Filled.PlayArrow, 80, { onTouch(); onPlayPause() }, bg = C.accent.copy(alpha = 0.9f))
+                RoundButton(if (live) Ic.SkipNext else Ic.Forward, 60, { onTouch(); onNext() })
+            }
+            // Onder: tijdbalk of programma
+            Column(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))))
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+            ) {
+                if (live) {
+                    val programs = rememberPrograms(item.epgId, 2)
+                    val now = programs.firstOrNull()?.takeIf { it.isLive() }
+                    if (now != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            T("NU", size = 13.sp, color = C.live, weight = FontWeight.Black)
+                            Spacer(Modifier.width(8.dp))
+                            T(now.title, size = 16.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            T("${clock(now.start)} – ${clock(now.stop)}", size = 13.sp, color = C.dim)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        ProgressBar(now.progress(), Modifier.fillMaxWidth())
+                    }
+                } else {
+                    SeekBar(if (length > 0) position.toFloat() / length else 0f, onSeek, onTouch)
+                    Spacer(Modifier.height(6.dp))
+                    Row {
+                        T(duration(position), size = 13.sp, color = C.dim, modifier = Modifier.weight(1f))
+                        if (length > 0) T("-" + duration(length - position), size = 13.sp, color = C.dim)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickButton(icon: ImageVector, label: String, tint: Color = Color.White, onClick: () -> Unit) {
+    Column(
+        Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(icon, tint, 24.dp)
+        T(label, size = 10.sp, color = C.dim)
+    }
+}
+
+/** Tijdbalk waar je op kunt tikken of langs kunt slepen. */
+@Composable
+private fun SeekBar(progress: Float, onSeek: (Float) -> Unit, onTouch: () -> Unit) {
+    var drag by remember { mutableStateOf<Float?>(null) }
+    val shown = drag ?: progress
+    Box(
+        Modifier.fillMaxWidth().height(28.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { o -> onTouch(); onSeek((o.x / size.width).coerceIn(0f, 1f)) }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { o -> drag = (o.x / size.width).coerceIn(0f, 1f) },
+                    onDragEnd = { drag?.let(onSeek); drag = null },
+                    onDragCancel = { drag = null },
+                ) { change, _ -> onTouch(); drag = (change.position.x / size.width).coerceIn(0f, 1f) }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = 0.25f)))
+        Box(Modifier.fillMaxWidth(shown).height(5.dp).clip(RoundedCornerShape(3.dp)).background(C.accent))
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+            Box(Modifier.padding(start = (maxWidth - 16.dp) * shown).size(16.dp).clip(CircleShape).background(Color.White))
+        }
+    }
+}
+
+/** Keuzelijst die van onderen omhoog komt (geluid, ondertitels, opnemen). */
+@Composable
+private fun OptionSheet(
+    title: String, options: List<Triple<String, Boolean, () -> Unit>>, empty: String, modifier: Modifier,
+    onPick: (() -> Unit) -> Unit, onClose: () -> Unit,
+) {
+    Column(
+        modifier.fillMaxWidth().padding(horizontal = 80.dp)
+            .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+            .background(C.panel.copy(alpha = 0.97f))
+            .pointerInput(Unit) { detectTapGestures { } }
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            T(title, size = 20.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            RoundButton(Icons.Filled.Close, 36, onClose, bg = C.surfaceHi)
+        }
+        Spacer(Modifier.height(8.dp))
+        if (options.isEmpty()) T(empty, color = C.dim, modifier = Modifier.padding(vertical = 12.dp))
+        LazyColumn(Modifier.heightIn(max = 220.dp)) {
+            items(options.size) { i ->
+                val (label, selected, act) = options[i]
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onPick(act) }.padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    T(label, size = 16.sp, weight = if (selected) FontWeight.Bold else FontWeight.Normal, color = if (selected) C.accent else C.text, modifier = Modifier.weight(1f))
+                    if (selected) Icon(Icons.Filled.Check, C.accent, 20.dp)
+                }
+            }
+        }
+    }
+}
+
+/** Technische info voor wie wil weten wat er gebeurt (aan te zetten in Geavanceerd). */
+@OptIn(UnstableApi::class)
+@Composable
+private fun TechInfo(player: ExoPlayer, modifier: Modifier) {
+    val text by produceState("") {
+        while (true) {
+            val v = player.videoFormat
+            val a = player.audioFormat
+            val state = when (player.playbackState) {
+                Player.STATE_BUFFERING -> "laden"; Player.STATE_READY -> if (player.isPlaying) "speelt" else "klaar"
+                Player.STATE_ENDED -> "einde"; else -> "stil"
+            }
+            val counters = player.videoDecoderCounters
+            value = buildString {
+                append("Status: $state · buffer ${(player.totalBufferedDuration / 100) / 10.0} s\n")
+                if (v != null) append("Beeld: ${v.sampleMimeType?.substringAfter('/')} ${v.width}x${v.height} ${if (v.frameRate > 0) "%.0f fps".format(v.frameRate) else ""}\n")
+                if (a != null) append("Geluid: ${a.sampleMimeType?.substringAfter('/')} ${a.channelCount} kan. ${a.sampleRate} Hz\n")
+                if (counters != null) append("Frames: ${counters.renderedOutputBufferCount} getoond · ${counters.droppedBufferCount} overgeslagen")
+            }
+            delay(1000)
+        }
+    }
+    T(text, modifier.background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(10.dp)).padding(12.dp), size = 13.sp, maxLines = 5)
 }
 
 @Composable

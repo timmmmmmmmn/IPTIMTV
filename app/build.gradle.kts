@@ -57,6 +57,10 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
+            // Geoptimaliseerde code: Compose is zonder R8 merkbaar trager op tv-chips.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     compileOptions {
@@ -84,4 +88,6 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
     implementation("androidx.media3:media3-datasource-okhttp:$media3")
     implementation("androidx.media3:media3-ui:$media3")
+    // Laat Android de app na installatie vooraf compileren (snellere start en soepeler scrollen).
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 }

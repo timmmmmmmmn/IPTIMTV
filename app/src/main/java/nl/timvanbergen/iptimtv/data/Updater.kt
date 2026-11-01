@@ -26,6 +26,8 @@ object Updater {
     var downloading by mutableStateOf<Float?>(null); private set
     var status by mutableStateOf<String?>(null)
     private var lastCheck = 0L
+    /** Gezet als we de gebruiker naar de toestemming sturen; daarna gaat de update vanzelf verder. */
+    var resumeAfterPermission = false
 
     val currentVersion get() = BuildConfig.VERSION_NAME
 
@@ -62,7 +64,8 @@ object Updater {
         val release = available ?: return
         // Eerst toestemming om apps te installeren (eenmalig per app).
         if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
-            status = "Geef IPTIMTV toestemming om updates te installeren en probeer het opnieuw"
+            status = "Geef IPTIMTV toestemming om updates te installeren"
+            resumeAfterPermission = true
             val intent = Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             runCatching { context.startActivity(intent) }

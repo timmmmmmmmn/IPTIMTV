@@ -151,6 +151,11 @@ private fun TeamLogo(t: Team) {
     }
 }
 
+private fun countryName(c: String) = mapOf(
+    "NL" to "Nederland", "BE" to "België", "UK" to "Engeland", "DE" to "Duitsland", "ES" to "Spanje", "IT" to "Italië",
+    "FR" to "Frankrijk", "PT" to "Portugal", "US" to "VS", "AR" to "Argentinië", "TR" to "Turkije", "AU" to "Australië",
+)[c] ?: c
+
 /** Een wedstrijd: op de achtergrond zoeken we alle zenders die hem (waarschijnlijk) uitzenden. */
 @Composable
 fun MatchInfo(m: Match) {
@@ -171,7 +176,7 @@ fun MatchInfo(m: Match) {
         Spacer(Modifier.height(20.dp))
         when {
             hits == null -> T("Zenders zoeken…", color = C.dim, size = 18.sp)
-            hits!!.isEmpty() -> T("Geen zenders gevonden voor deze wedstrijd.", color = C.dim, size = 18.sp)
+            hits!!.isEmpty() -> T("Geen zender gevonden die deze wedstrijd zeker uitzendt.", color = C.dim, size = 18.sp, maxLines = 2)
             else -> {
                 T("Hier is hij (waarschijnlijk) te zien", size = 20.sp, weight = FontWeight.Bold)
                 Spacer(Modifier.height(10.dp))
@@ -191,10 +196,12 @@ fun MatchInfo(m: Match) {
                                 Spacer(Modifier.width(16.dp))
                                 Column(Modifier.weight(1f)) {
                                     T(h.channel.name, size = 18.sp, weight = FontWeight.Bold)
-                                    T(h.reason, size = 14.sp, color = if (h.score >= 60) C.accent else C.dim)
+                                    T(h.reason, size = 14.sp, color = C.accent)
                                 }
-                                if (h.score >= 90) T("Beste keus", size = 13.sp, weight = FontWeight.Bold, color = C.bg,
-                                    modifier = Modifier.background(C.accent, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+                                h.country?.let { c ->
+                                    T(countryName(c), size = 13.sp, weight = FontWeight.Bold, color = C.text,
+                                        modifier = Modifier.background(C.surfaceHi, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+                                }
                             }
                         }
                     }

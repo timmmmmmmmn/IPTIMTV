@@ -206,7 +206,7 @@ fun Poster(url: String?, name: String, modifier: Modifier = Modifier) {
 }
 
 fun initials(name: String): String =
-    name.split(' ', '-', '|', ':').filter { it.isNotBlank() && it[0].isLetterOrDigit() }.take(2)
+    name.replace(Regex("""^\W*[A-Za-z]{2,3}\s*[|:]\s*"""), "").split(' ', '-', '|', ':').filter { it.isNotBlank() && it[0].isLetterOrDigit() }.take(2)
         .joinToString("") { it.take(1).uppercase() }
 
 @Composable

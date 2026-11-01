@@ -212,7 +212,9 @@ private fun AppContent(onExit: () -> Unit) {
             if (Settings.autoUpdate.on) {
                 val r = Updater.check()
                 val prefs = context.getSharedPreferences("iptimtv", 0)
-                if (r != null && prefs.getInt("update_dismissed", 0) != r.version && Nav.overlays.none { it is Overlay.Update }) {
+                // Niet midden in het eerste inloggen of tijdens het kijken.
+                while (Library.profiles.isEmpty() || Nav.play != null || Nav.overlays.isNotEmpty()) delay(5000)
+                if (r != null && prefs.getInt("update_dismissed", 0) != r.version) {
                     Nav.open(Overlay.Update)
                 }
             }
@@ -234,6 +236,7 @@ private fun AppContent(onExit: () -> Unit) {
 private fun OverlayHost(o: Overlay) {
     BackHandler { Nav.close() }
     val focus = remember { FocusRequester() }
+    var inside by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         delay(20)
         val back = Nav.pendingFocus
@@ -243,6 +246,11 @@ private fun OverlayHost(o: Overlay) {
             runCatching { focus.requestFocus() }
         }
         Nav.restoring = false
+        // Zat er nog een tekstveld of iets anders vast aan de focus? Dan nog even doorproberen.
+        repeat(10) {
+            delay(150)
+            if (!inside && !Mobile) runCatching { focus.requestFocus() }
+        }
     }
     // Focus blijft binnen het bovenste scherm; het hoofdscherm eronder is onbereikbaar.
     Box(
@@ -250,6 +258,7 @@ private fun OverlayHost(o: Overlay) {
             .fillMaxSize()
             .background(C.bg.copy(alpha = if (o.isDialog) 0.88f else 1f))
             .then(if (Mobile) Modifier.padding(top = 24.dp) else Modifier)
+            .onFocusChanged { inside = it.hasFocus }
             .focusRequester(focus)
             .focusProperties { onExit = { cancelFocusChange() } }
             .focusGroup(),
@@ -434,9 +443,9 @@ private fun StatusArea() {
         while (true) { value = System.currentTimeMillis(); delay(10_000) }
     }
     Column(horizontalAlignment = Alignment.End) {
-        if (Settings.showClock.on) T(clock(now), size = 22.sp, weight = FontWeight.Bold)
+        if (Settings.showClock.on) T(clock(now), size = 40.sp, weight = FontWeight.Bold)
         val status = Library.loading ?: if (Library.epgLoading) "Gids bijwerken…" else Library.active?.name
-        if (status != null) T(status, size = 13.sp, color = C.dim)
+        if (status != null) T(status, size = 14.sp, color = C.dim)
     }
 }
 
